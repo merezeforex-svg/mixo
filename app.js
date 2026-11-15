@@ -1,4 +1,4 @@
-// ============ MIXO frontend (camera, delete posts and comments) ============
+// ============ MIXO frontend (Stage 3 - Part A: real video posts) ============
 const MAX_SECONDS = 30; // longest video allowed while testing on free storage
 const MAX_MB = 50;      // Supabase free plan file size limit
 
@@ -70,8 +70,7 @@ function checkForm(id, f) {
 }
 
 const niceError = (m = "") =>
-  /^blocked$/i.test(m) ? "You can't follow this person."
-  : /invalid login/i.test(m) ? "Wrong email or password."
+  /invalid login/i.test(m) ? "Wrong email or password."
   : /already registered|already been registered/i.test(m) ? "That email already has an account. Try logging in."
   : /database error/i.test(m) ? "That username is taken. Try another."
   : /rate limit/i.test(m) ? "Too many tries. Wait a few minutes and try again."
@@ -138,16 +137,6 @@ function paintAvatar(el, p, name) {
   else el.textContent = (name || "M")[0].toUpperCase();
 }
 
-// shows the pin for a country, or the custom Earth logo
-function setLoc(el, country, empty) {
-  const earth = country === "Earth";
-  el.textContent = country || empty;
-  const ic = el.previousElementSibling;
-  if (!ic) return;
-  ic.classList.toggle("earth", earth);
-  ic.firstElementChild.setAttribute("href", earth ? "#i-earth" : "#i-pin");
-}
-
 function fillProfile() {
   const p = MIXO.profile || {};
   const name = p.display_name || p.username || "Your name";
@@ -156,7 +145,7 @@ function fillProfile() {
   $("#pUser").textContent = p.username ? "@" + p.username : "@username";
   $("#pBio").textContent = p.bio || "Add a bio";
   $("#pBio").classList.toggle("hint", !p.bio);
-  setLoc($("#pCountry"), p.country, MIXO.user ? "Detecting your country..." : "Add your location");
+  $("#pCountry").textContent = p.country || "Add your location";
   $("#pCountry").classList.toggle("hint", !p.country);
   const bi = $("#pBannerImg");
   if (p.banner_url) { bi.src = p.banner_url; bi.classList.remove("hidden"); $("#pBanner").classList.add("custom"); }
@@ -167,17 +156,13 @@ function enterApp() {
   $("#auth").classList.add("hidden");
   $("#app").classList.remove("hidden");
   fillProfile();
-  ensureCountry();
-  startInbox();
-  loadSocial().finally(() => { renderFeed(); loadMyPosts(); refreshMyStats(); openFromHash(); });
+  loadSocial().finally(() => { renderFeed(); loadMyPosts(); });
 }
 $("#previewBtn").onclick = enterApp;
 
 $("#logoutBtn").onclick = async () => {
-  $("#setSheet").classList.add("hidden");
   if (sb) await sb.auth.signOut();
   pauseAll();
-  stopInbox();
   $("#feed").innerHTML = "";
   MIXO.user = null;
   MIXO.profile = null;
@@ -190,16 +175,16 @@ $("#logoutBtn").onclick = async () => {
 
 // ---------- navigation ----------
 const state = { liked: new Set(), following: new Set(), prev: "home" };
-const social = { likes: new Set(), saves: new Set(), following: new Set(), blocked: new Set() };
+const social = { likes: new Set(), saves: new Set() };
+let pendingSound = null; // a sound picked with "Use sound"
 
 function go(page) {
   $$(".page").forEach((p) => p.classList.toggle("on", p.id === page));
   $$("#nav [data-page]").forEach((b) => b.classList.toggle("on", b.dataset.page === page));
-  if (page === "home") { if (MIXO.current) MIXO.current.play().catch(() => {}); }
+  if (page === "home") resumeCurrent();
   else pauseAll();
   if (page === "profile") loadMyPosts();
   if (page === "explore") loadExplore();
-  if (page === "inbox") refreshInbox();
 }
 $$("#nav [data-page]").forEach((b) => (b.onclick = () => go(b.dataset.page)));
 
@@ -211,13 +196,13 @@ $$(".page .seg").forEach((seg) => {
 });
 
 // ---------- create sheet ----------
-$("#createBtn").onclick = () => $("#sheet").classList.remove("hidden");
+$("#createBtn").onclick = () => openCamera();
 $("#sheet").onclick = (e) => {
   if (e.target.id === "sheet") $("#sheet").classList.add("hidden");
   const opt = e.target.closest(".opt");
   if (opt) {
     $("#sheet").classList.add("hidden");
-    if (opt.dataset.kind === "video") openCamera();
+    if (opt.dataset.kind === "video") openPost();
     else if (opt.dataset.kind === "photo") openPhoto();
     else openTopic();
   }
@@ -241,11 +226,14 @@ function openPost() {
   if (!MIXO.user) return toast("Log in with your account to post");
   resetPost();
   postSheet.classList.remove("hidden");
+  paintSoundChips();
 }
 function closePost() {
   if (uploading) return;
   postSheet.classList.add("hidden");
   resetPost();
+  pendingSound = null;
+  paintSoundChips();
 }
 $("#postCancel").onclick = closePost;
 postSheet.onclick = (e) => { if (e.target.id === "postSheet") closePost(); };
@@ -255,18 +243,6 @@ $("#postFile").onchange = (e) => {
   const file = e.target.files[0];
   e.target.value = "";
   if (!file) return;
-  if (postSheet.classList.contains("hidden")) { camClose(); openPost(); }
-  handleVideoFile(file);
-};
-$("#camNative").onchange = (e) => {
-  const file = e.target.files[0];
-  e.target.value = "";
-  if (!file) return;
-  camClose();
-  openPost();
-  handleVideoFile(file);
-};
-function handleVideoFile(file) {
   postMsg.textContent = "";
   if (file.size > MAX_MB * 1048576) { postMsg.textContent = "That video is over " + MAX_MB + " MB. Pick a shorter one."; return; }
   const url = URL.createObjectURL(file);
@@ -275,7 +251,7 @@ function handleVideoFile(file) {
   probe.onloadedmetadata = () => {
     const d = probe.duration;
     URL.revokeObjectURL(url);
-    if (isFinite(d) && d > MAX_SECONDS + 0.5) { postMsg.textContent = "Videos can be up to " + MAX_SECONDS + " seconds. Yours is " + Math.round(d) + "s."; return; }
+    if (d > MAX_SECONDS + 0.5) { postMsg.textContent = "Videos can be up to " + MAX_SECONDS + " seconds. Yours is " + Math.round(d) + "s."; return; }
     picked = file;
     if (postVid.src) URL.revokeObjectURL(postVid.src);
     postVid.src = URL.createObjectURL(file);
@@ -285,7 +261,7 @@ function handleVideoFile(file) {
   };
   probe.onerror = () => { URL.revokeObjectURL(url); postMsg.textContent = "Couldn't read that video. Try an MP4."; };
   probe.src = url;
-}
+};
 
 $("#postForm").addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -301,7 +277,9 @@ $("#postForm").addEventListener("submit", async (e) => {
     const up = await sb.storage.from("videos").upload(path, picked, { contentType: picked.type || "video/mp4" });
     if (up.error) throw up.error;
     const url = sb.storage.from("videos").getPublicUrl(path).data.publicUrl;
-    const ins = await sb.from("posts").insert({ user_id: MIXO.user.id, type: "video", caption: e.target.caption.value.trim(), media_url: url });
+    const row = { user_id: MIXO.user.id, type: "video", caption: e.target.caption.value.trim(), media_url: url };
+    if (pendingSound) row.sound_id = pendingSound.id;
+    const ins = await sb.from("posts").insert(row);
     if (ins.error) { await sb.storage.from("videos").remove([path]); throw ins.error; }
     uploading = false;
     closePost();
@@ -310,224 +288,18 @@ $("#postForm").addEventListener("submit", async (e) => {
     toast("Posted!");
     loadMyPosts();
   } catch (err) {
-    postMsg.textContent = niceError(err.message);
+    postMsg.textContent = socialErr(err);
   } finally {
     uploading = false;
     btn.disabled = false;
   }
 });
 
-// ---------- camera: opens first when you tap Video post ----------
-const cam = { stream: null, rec: null, chunks: [], facing: "user", max: 15, timer: false, torch: false, t0: 0, raf: 0, cd: 0, file: null, url: "", busy: false };
-const camEl = $("#cam"), camVid = $("#camVid");
-const REC_C = 289.03;
-const CAM_MIMES = ["video/mp4;codecs=avc1.42E01E,mp4a.40.2", "video/mp4", "video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm"];
-const setRing = (p) => { $("#camProg").style.strokeDashoffset = REC_C * (1 - Math.min(1, Math.max(0, p))); };
-const camUi = (s) => { camEl.dataset.state = s; };
-function camFail(msg) { $("#camErrTxt").textContent = msg; $("#camErr").classList.remove("hidden"); }
-
-async function camStart() {
-  camStop();
-  const stream = await navigator.mediaDevices.getUserMedia({
-    video: { facingMode: cam.facing, width: { ideal: 1280 }, height: { ideal: 960 } },
-    audio: true
-  });
-  cam.stream = stream;
-  camVid.srcObject = stream;
-  camVid.classList.toggle("mirror", cam.facing === "user");
-  try { await camVid.play(); } catch (e) {}
-  const track = stream.getVideoTracks()[0];
-  const caps = (track && track.getCapabilities && track.getCapabilities()) || {};
-  cam.torch = false;
-  $("#camFlash").classList.toggle("hidden", !caps.torch);
-  $("#camFlash").classList.remove("on");
-  $("#camErr").classList.add("hidden");
-}
-function camStop() {
-  if (cam.stream) cam.stream.getTracks().forEach((t) => t.stop());
-  cam.stream = null;
-  camVid.srcObject = null;
-}
-async function openCamera(opts) {
-  if (!MIXO.user) return toast("Log in with your account to post");
-  cam.reply = (opts && opts.reply) || null;
-  pauseAll();
-  camEl.classList.remove("hidden");
-  camUi("idle");
-  $("#camReview").classList.add("hidden");
-  $("#camTime").classList.add("hidden");
-  $("#camCount").classList.add("hidden");
-  $("#camErr").classList.add("hidden");
-  setRing(0);
-  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.MediaRecorder) {
-    return camFail("This browser can't open the camera here. Use your phone's camera instead.");
-  }
-  try { await camStart(); }
-  catch (err) {
-    camFail(err && err.name === "NotAllowedError"
-      ? "Camera or microphone access is blocked. Allow it in your browser settings, or use your phone's camera."
-      : "Couldn't start the camera. Use your phone's camera instead.");
-  }
-}
-function camClose() {
-  if (cam.rec && cam.rec.state === "recording") { cam.rec.onstop = null; try { cam.rec.stop(); } catch (e) {} }
-  cancelAnimationFrame(cam.raf);
-  clearTimeout(cam.cd);
-  cam.busy = false;
-  camStop();
-  if (cam.url) { URL.revokeObjectURL(cam.url); cam.url = ""; }
-  const rv = $("#camRevVid");
-  rv.pause();
-  rv.removeAttribute("src");
-  $("#camCount").classList.add("hidden");
-  camEl.classList.add("hidden");
-  if ($("#home").classList.contains("on") && MIXO.current) MIXO.current.play().catch(() => {});
-}
-
-function camStartRec() {
-  const mime = CAM_MIMES.find((m) => MediaRecorder.isTypeSupported(m)) || "";
-  try {
-    cam.rec = new MediaRecorder(cam.stream, Object.assign({ videoBitsPerSecond: 3000000 }, mime ? { mimeType: mime } : {}));
-  } catch (err) { return toast("This browser can't record video here."); }
-  cam.chunks = [];
-  cam.rec.ondataavailable = (e) => { if (e.data && e.data.size) cam.chunks.push(e.data); };
-  cam.rec.onstop = camFinish;
-  cam.rec.start(250);
-  cam.t0 = Date.now();
-  camUi("rec");
-  $("#camTime").classList.remove("hidden");
-  const loop = () => {
-    const t = (Date.now() - cam.t0) / 1000;
-    setRing(t / cam.max);
-    $("#camTime").textContent = "0:" + String(Math.floor(t)).padStart(2, "0");
-    if (t >= cam.max) return camStopRec();
-    cam.raf = requestAnimationFrame(loop);
-  };
-  loop();
-}
-function camStopRec() {
-  cancelAnimationFrame(cam.raf);
-  if (cam.rec && cam.rec.state === "recording") cam.rec.stop();
-}
-function camFinish() {
-  camUi("idle");
-  $("#camTime").classList.add("hidden");
-  setRing(0);
-  if (Date.now() - cam.t0 < 800) return toast("Too short. Record a little longer.");
-  const type = (cam.rec.mimeType || "video/mp4").split(";")[0];
-  cam.file = new File(cam.chunks, "mixo-" + Date.now() + "." + (type.indexOf("mp4") > -1 ? "mp4" : "webm"), { type });
-  if (cam.url) URL.revokeObjectURL(cam.url);
-  cam.url = URL.createObjectURL(cam.file);
-  const rv = $("#camRevVid");
-  rv.src = cam.url;
-  rv.play().catch(() => {});
-  $("#camReview").classList.remove("hidden");
-}
-function camCountdown(n) {
-  cam.busy = true;
-  const c = $("#camCount");
-  c.classList.remove("hidden");
-  const tick = () => {
-    if (n === 0) { c.classList.add("hidden"); cam.busy = false; camStartRec(); return; }
-    c.textContent = n;
-    n--;
-    c.classList.remove("pop");
-    void c.offsetWidth;
-    c.classList.add("pop");
-    cam.cd = setTimeout(tick, 1000);
-  };
-  tick();
-}
-
-$("#camRec").onclick = () => {
-  if (cam.rec && cam.rec.state === "recording") return camStopRec();
-  if (!cam.stream || cam.busy) return;
-  if (cam.timer) camCountdown(3); else camStartRec();
-};
-$("#camClose").onclick = camClose;
-$("#camErrClose").onclick = camClose;
-$("#camErrBtn").onclick = () => $("#camNative").click();
-$("#camUp").onclick = () => (cam.reply ? $("#vrFile") : $("#postFile")).click();
-$("#camFlip").onclick = async () => {
-  if (cam.busy || (cam.rec && cam.rec.state === "recording")) return;
-  cam.facing = cam.facing === "user" ? "environment" : "user";
-  try { await camStart(); } catch (err) { toast("Couldn't switch the camera."); }
-};
-$("#camFlash").onclick = async () => {
-  const track = cam.stream && cam.stream.getVideoTracks()[0];
-  if (!track) return;
-  cam.torch = !cam.torch;
-  try { await track.applyConstraints({ advanced: [{ torch: cam.torch }] }); $("#camFlash").classList.toggle("on", cam.torch); }
-  catch (err) { cam.torch = false; toast("Flash isn't available."); }
-};
-$("#camTimer").onclick = () => {
-  cam.timer = !cam.timer;
-  $("#camTimer").classList.toggle("on", cam.timer);
-};
-$$("#camModes button").forEach((b) => (b.onclick = () => {
-  cam.max = +b.dataset.s;
-  $$("#camModes button").forEach((x) => x.classList.toggle("on", x === b));
-}));
-$("#camRetake").onclick = () => { $("#camRevVid").pause(); $("#camReview").classList.add("hidden"); };
-$("#camNext").onclick = () => {
-  const f = cam.file;
-  if (cam.reply) { const r = cam.reply; camClose(); return sendVideoReply(r, f); }
-  camClose();
-  openPost();
-  handleVideoFile(f);
-};
-
 // ---------- connect + profile ----------
 $("#findBtn").onclick = () => toast("Real voice matching goes live in Stage 7");
 // ---------- edit profile ----------
-
-// ---------- country: found automatically, locked, or Earth ----------
-let countryChoice = "real";
-const regionName = (cc) => { try { return new Intl.DisplayNames(["en"], { type: "region" }).of(String(cc).toUpperCase()) || ""; } catch (e) { return ""; } };
-const getPosition = () => new Promise((res, rej) => {
-  if (!navigator.geolocation) return rej(new Error("no geolocation"));
-  navigator.geolocation.getCurrentPosition(res, rej, { timeout: 10000, maximumAge: 3600000 });
-});
-// only the country is kept, never the coordinates
-async function detectCountry() {
-  try {
-    const pos = await getPosition();
-    const r = await fetch("https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=" + pos.coords.latitude + "&longitude=" + pos.coords.longitude + "&localityLanguage=en");
-    const j = await r.json();
-    const name = (j.countryCode && regionName(j.countryCode)) || j.countryName;
-    if (name) return name;
-  } catch (e) {}
-  try { // location blocked: fall back to the network's country
-    const r = await fetch("https://api.country.is/");
-    const j = await r.json();
-    if (j.country) return regionName(j.country);
-  } catch (e) {}
-  return "";
-}
-async function ensureCountry() {
-  const p = MIXO.profile;
-  if (!sb || !MIXO.user || !p || p.real_country) return;
-  const name = await detectCountry();
-  if (!name) return toast("Couldn't find your country. We'll try again next time.");
-  const { data, error } = await sb.from("profiles").update({ real_country: name, country: name }).eq("id", MIXO.user.id).select().single();
-  if (error) return toast(/real_country/.test(error.message) ? "Run mixo_country.sql in Supabase first." : niceError(error.message));
-  MIXO.profile = data;
-  fillProfile();
-  toast("Your country is set to " + name);
-}
-function paintCountryPick() {
-  const real = (MIXO.profile || {}).real_country;
-  $("#cpReal").textContent = real || "Not found yet";
-  $('#countryPick [data-v="real"]').disabled = !real;
-  if (!real) countryChoice = "earth";
-  $$("#countryPick button").forEach((b) => b.classList.toggle("on", b.dataset.v === countryChoice));
-}
-$("#countryPick").addEventListener("click", (e) => {
-  const b = e.target.closest("button");
-  if (!b || b.disabled) return;
-  countryChoice = b.dataset.v;
-  paintCountryPick();
-});
+const COUNTRIES = ["Afghanistan","Algeria","Argentina","Australia","Austria","Bangladesh","Belgium","Brazil","Cameroon","Canada","Chile","China","Colombia","Czechia","Denmark","Egypt","Ethiopia","Finland","France","Germany","Ghana","Greece","Hungary","India","Indonesia","Iran","Iraq","Ireland","Israel","Italy","Japan","Jordan","Kenya","Lebanon","Malaysia","Mexico","Morocco","Nepal","Netherlands","New Zealand","Nigeria","Norway","Pakistan","Peru","Philippines","Poland","Portugal","Romania","Russia","Saudi Arabia","Senegal","Singapore","Somalia","South Africa","South Korea","Spain","Sri Lanka","Sudan","Sweden","Switzerland","Syria","Tanzania","Thailand","Tunisia","Turkey","Uganda","Ukraine","United Arab Emirates","United Kingdom","United States","Venezuela","Vietnam","Yemen","Zimbabwe"];
+$("#countries").innerHTML = COUNTRIES.map((c) => `<option value="${c}">`).join("");
 
 function openEdit() {
   if (!MIXO.user) return toast("Log in with your account to edit your profile");
@@ -535,8 +307,7 @@ function openEdit() {
   const f = $("#editForm");
   f.display_name.value = p.display_name || "";
   f.bio.value = p.bio || "";
-  countryChoice = p.country === "Earth" ? "earth" : "real";
-  paintCountryPick();
+  f.country.value = p.country || "";
   paintEdit();
   $("#editMsg").textContent = "";
   $("#editSheet").classList.remove("hidden");
@@ -682,12 +453,8 @@ $("#editForm").addEventListener("submit", async (e) => {
   btn.disabled = true;
   msg.textContent = "";
   try {
-    const upd = { display_name, bio: f.bio.value.trim() };
-    const real = (MIXO.profile || {}).real_country;
-    if (countryChoice === "earth") upd.country = "Earth";
-    else if (real) upd.country = real;
     const { data, error } = await sb.from("profiles")
-      .update(upd)
+      .update({ display_name, bio: f.bio.value.trim(), country: f.country.value.trim() || null })
       .eq("id", MIXO.user.id).select().single();
     if (error) throw error;
     MIXO.profile = data;
@@ -702,107 +469,22 @@ $("#editForm").addEventListener("submit", async (e) => {
 });
 
 // ---------- follow + like (shared by feed and creator page) ----------
-// ---------- follow (saved in the database) ----------
-function paintFollow(uid) {
-  const on = social.following.has(uid);
-  $$(`.creator[data-uid="${uid}"]`).forEach((c) => {
+function setFollow(user, on) {
+  on ? state.following.add(user) : state.following.delete(user);
+  $$(`.creator[data-user="${user}"]`).forEach((c) => {
     c.classList.toggle("following", on);
     const p = $(".plus", c);
-    if (!p) return;
     p.innerHTML = icon(on ? "check" : "plus");
     p.classList.remove("pop");
     void p.offsetWidth;
     p.classList.add("pop");
   });
   const cf = $("#cFollow");
-  if (cf.dataset.uid === uid) {
+  if (cf.dataset.user === user) {
     cf.textContent = on ? "Following" : "Follow";
     cf.classList.toggle("is-on", on);
   }
 }
-
-async function toggleFollow(uid, uname) {
-  if (!MIXO.user) return toast("Log in with your account to follow");
-  if (!uid) return toast("This is just a preview post");
-  if (uid === MIXO.user.id) return;
-  const on = !social.following.has(uid);
-  on ? social.following.add(uid) : social.following.delete(uid);
-  paintFollow(uid);
-  const r = on
-    ? await sb.from("follows").insert({ following_id: uid })
-    : await sb.from("follows").delete().eq("follower_id", MIXO.user.id).eq("following_id", uid);
-  if (r.error && r.error.code !== "23505") {
-    on ? social.following.delete(uid) : social.following.add(uid);
-    paintFollow(uid);
-    return toast(socialErr(r.error));
-  }
-  refreshMyStats();
-  if ($("#cFollow").dataset.uid === uid) refreshCreatorStats(uid);
-}
-
-async function loadStats(uid) {
-  const head = { count: "exact", head: true };
-  const [a, b, c] = await Promise.all([
-    sb.from("follows").select("follower_id", head).eq("follower_id", uid),
-    sb.from("follows").select("follower_id", head).eq("following_id", uid),
-    sb.from("post_likes").select("post_id,posts!inner(user_id)", head).eq("posts.user_id", uid),
-  ]);
-  return { following: a.count || 0, followers: b.count || 0, likes: c.count || 0 };
-}
-function showStats(prefix, s) {
-  $("#" + prefix + "Following").textContent = fmt(s.following);
-  $("#" + prefix + "Followers").textContent = fmt(s.followers);
-  $("#" + prefix + "Likes").textContent = fmt(s.likes);
-}
-async function refreshMyStats() {
-  if (!sb || !MIXO.user) return;
-  try { showStats("p", await loadStats(MIXO.user.id)); } catch (e) {}
-}
-async function refreshCreatorStats(uid) {
-  if (!sb || !uid) return;
-  try {
-    const s = await loadStats(uid);
-    if ($("#cFollow").dataset.uid === uid) showStats("c", s);
-  } catch (e) {}
-}
-
-// ---------- followers / following lists ----------
-let listUsers = [];
-async function openList(kind, uid) {
-  if (!sb || !uid) return;
-  const followers = kind === "followers";
-  $("#lsTitle").textContent = followers ? "Followers" : "Following";
-  $("#lsBody").innerHTML = '<p class="hint">Loading...</p>';
-  $("#listSheet").classList.remove("hidden");
-  const r = await sb.from("follows")
-    .select("p:profiles!" + (followers ? "follower_id" : "following_id") + "(id,username,display_name,avatar_url,bio,country)")
-    .eq(followers ? "following_id" : "follower_id", uid)
-    .order("created_at", { ascending: false }).limit(100);
-  if (r.error) { $("#lsBody").innerHTML = `<p class="hint">${esc(socialErr(r.error))}</p>`; return; }
-  listUsers = r.data.map((x) => x.p).filter((p) => p && !social.blocked.has(p.id));
-  $("#lsBody").innerHTML = listUsers.length
-    ? listUsers.map((p, i) => `<button type="button" class="lrow" data-i="${i}"><div class="lav"></div><div class="ltx"><b>${esc(p.display_name || p.username)}</b><span>@${esc(p.username)}</span></div></button>`).join("")
-    : `<p class="hint">${followers ? "No followers yet." : "Not following anyone yet."}</p>`;
-  $$("#lsBody .lav").forEach((el, i) => setAv(el, listUsers[i].avatar_url, listUsers[i].username));
-}
-$("#listSheet").addEventListener("click", (e) => {
-  if (e.target.id === "listSheet") return $("#listSheet").classList.add("hidden");
-  const row = e.target.closest(".lrow");
-  if (!row) return;
-  const p = listUsers[+row.dataset.i];
-  $("#listSheet").classList.add("hidden");
-  openCreator({ uid: p.id, user: p.username, name: p.display_name || p.username, avatar: p.avatar_url,
-    bio: p.bio || "", country: p.country || "", profile: { following: 0, followers: 0, likes: 0 } });
-});
-$("#profile .statcard").addEventListener("click", (e) => {
-  const d = e.target.closest("[data-list]");
-  if (d && MIXO.user) openList(d.dataset.list, MIXO.user.id);
-});
-$("#creator .statcard").addEventListener("click", (e) => {
-  const d = e.target.closest("[data-list]");
-  const u = $("#cFollow").dataset.uid;
-  if (d && u) openList(d.dataset.list, u);
-});
 
 function setLike(v, on) {
   on ? state.liked.add(v.id) : state.liked.delete(v.id);
@@ -814,29 +496,25 @@ function setLike(v, on) {
 
 // ---------- creator profile page ----------
 function openCreator(v) {
-  if (MIXO.user && v.uid && v.uid === MIXO.user.id) return go("profile");
   state.prev = $(".page.on")?.id || "home";
   setAv($("#cAvatar"), v.avatar, v.user);
   $("#cName").textContent = v.name;
   $("#cUser").textContent = "@" + v.user;
-  showStats("c", v.profile || { following: 0, followers: 0, likes: 0 });
-  $("#cBio").textContent = v.bio || "";
-  setLoc($("#cCountry"), v.country, "Not set");
-  $("#cFollow").dataset.uid = v.uid || "";
-  paintFollow(v.uid || "");
+  $("#cFollowing").textContent = fmt(v.profile.following);
+  $("#cFollowers").textContent = fmt(v.profile.followers);
+  $("#cLikes").textContent = fmt(v.profile.likes);
+  $("#cBio").textContent = v.bio;
+  $("#cCountry").textContent = v.country || "Not set";
+  $("#cFollow").dataset.user = v.user;
+  setFollow(v.user, state.following.has(v.user));
   go("creator");
-  if (v.uid) refreshCreatorStats(v.uid);
-  cUid = v.uid || ""; cTab = 0;
-  $$("#cTabs button").forEach((x, n) => x.classList.toggle("on", n === 0));
-  $("#cPrev").classList.toggle("hidden", !!v.uid);
-  $("#cTabs").classList.toggle("hidden", !v.uid);
-  $("#cBanner").classList.remove("custom");
-  $("#cBannerImg").classList.add("hidden");
-  $("#cGrid").innerHTML = "";
-  if (v.uid && sb) { loadCreatorProfile(v.uid); loadCreatorPosts(); }
 }
 $("#backBtn").onclick = () => go(state.prev || "home");
-$("#cFollow").onclick = (e) => toggleFollow(e.currentTarget.dataset.uid, $("#cUser").textContent.replace("@", ""));
+$("#cMsg").onclick = () => toast("Messages come in Stage 5");
+$("#cFollow").onclick = (e) => {
+  const u = e.target.dataset.user;
+  setFollow(u, !state.following.has(u));
+};
 
 // ---------- home feed ----------
 const DEMO = [
@@ -855,9 +533,8 @@ function setAv(el, url, name) {
 }
 
 function clipHTML(v) {
-  const fol = !!(v.uid && social.following.has(v.uid));
-  const liked = MIXO.user ? social.likes.has(String(v.id)) : state.liked.has(v.id);
-  const mine = !!(MIXO.user && v.uid && v.uid === MIXO.user.id);
+  const fol = state.following.has(v.user);
+  const liked = state.liked.has(v.id);
   const av = v.avatar ? `<img src="${esc(v.avatar)}" alt="">` : esc((v.user || "M")[0].toUpperCase());
   const type = v.type || "video";
   const isVid = type === "video" && v.src;
@@ -868,22 +545,23 @@ function clipHTML(v) {
   return `
   <article class="clip" data-id="${esc(v.id)}">
     ${media}
-    ${mine || (MIXO.user && v.uid) ? `<button class="more" data-act="more" aria-label="${mine ? "Delete or more" : "More"}">${icon("more")}</button>` : ""}
     ${isVid ? `<div class="pill"><span class="arr"><i></i><i></i></span><span class="pt">Pull down to lock 2x speed</span></div>` : ""}
     <div class="info">
       <div class="user">@${esc(v.user)}</div>
       ${v.caption && type !== "topic" ? `<p class="cap">${esc(v.caption)}</p>` : ""}
-      ${type === "video" ? `<div class="snd">${icon("music")}<span>${esc(v.sound)}</span></div>` : ""}
+      ${type === "video" ? `<div class="snd" data-act="sound">${icon("music")}<span>${esc(v.sound)}</span></div>` : ""}
     </div>
     <div class="rail">
-      <div class="creator ${fol ? "following" : ""} ${mine ? "solo" : ""}" data-uid="${esc(v.uid || "")}">
+      <div class="creator ${fol ? "following" : ""}" data-user="${esc(v.user)}">
         <div class="av" data-act="profile" role="button" aria-label="Open profile">${av}</div>
-        ${mine ? "" : `<button class="plus" data-act="follow" aria-label="Follow">${icon(fol ? "check" : "plus")}</button>`}
+        <button class="plus" data-act="follow" aria-label="Follow">${icon(fol ? "check" : "plus")}</button>
       </div>
-      <button data-act="like" class="${liked ? "on" : ""}">${icon("heart")}<span class="n">${fmt(MIXO.user ? v.likes : v.likes + (liked ? 1 : 0))}</span></button>
+      <button data-act="like" class="${liked ? "on" : ""}">${icon("heart")}<span class="n">${fmt(v.likes + (liked ? 1 : 0))}</span></button>
       <button data-act="comment">${icon("comment")}<span>${fmt(v.comments)}</span></button>
       <button data-act="save" class="${social.saves.has(String(v.id)) ? "on" : ""}">${icon("save")}<span>Save</span></button>
       <button data-act="share">${icon("share")}<span>Share</span></button>
+      ${MIXO.user && v.uid === MIXO.user.id ? `<button data-act="delete">${icon("trash")}<span>Delete</span></button>` : ""}
+      ${type === "video" ? `<div class="disc" data-act="sound">${icon("music")}</div>` : ""}
     </div>
   </article>`;
 }
@@ -902,8 +580,24 @@ async function renderFeed() {
   }
   feed.innerHTML = emptyFeed("Loading videos...");
   try {
-    const list = await queryPosts((q) => q.eq("type", "video").order("created_at", { ascending: false }).limit(30));
-    videos = list.map((o) => Object.assign(o, { src: o.img, caption: o.text, sound: "Original sound" }));
+    const FC = "id,user_id,type,caption,media_url,created_at,profiles!user_id(username,display_name,avatar_url,bio,country)";
+    const qf = (cols) => sb.from("posts").select(cols).eq("type", "video").order("created_at", { ascending: false }).limit(30);
+    let { data, error } = await qf(FC + ",sound_id");
+    if (error) ({ data, error } = await qf(FC));
+    if (error) throw error;
+    const roots = {};
+    const rids = [...new Set((data || []).map((r) => r.sound_id).filter(Boolean))];
+    if (rids.length) {
+      const rr = await sb.from("posts").select("id,media_url,profiles!user_id(username)").in("id", rids);
+      (rr.data || []).forEach((x) => { const pp = Array.isArray(x.profiles) ? x.profiles[0] : x.profiles; roots[String(x.id)] = { src: x.media_url, user: (pp && pp.username) || "user" }; });
+    }
+    videos = (data || []).map((r) => {
+      const p = (Array.isArray(r.profiles) ? r.profiles[0] : r.profiles) || {};
+      return { id: r.id, uid: r.user_id, type: r.type || "video", src: r.media_url, user: p.username || "user", name: p.display_name || p.username || "User",
+        avatar: p.avatar_url, caption: r.caption || "", soundId: roots[String(r.sound_id)] ? r.sound_id : null, soundSrc: roots[String(r.sound_id)] ? roots[String(r.sound_id)].src : null,
+        sound: roots[String(r.sound_id)] ? "Original sound \u00b7 @" + roots[String(r.sound_id)].user : "Original sound", likes: 0, comments: 0,
+        bio: p.bio || "", country: p.country || "", profile: { following: 0, followers: 0, likes: 0 } };
+    });
     // your own posts first, then everyone else's (newest first in each group)
     videos.sort((a, b) => (b.uid === MIXO.user.id) - (a.uid === MIXO.user.id));
   } catch (err) {
@@ -917,6 +611,29 @@ async function renderFeed() {
   watchVideos();
 }
 
+// one shared audio player for borrowed sounds
+const SND = new Audio(); SND.loop = true; SND.preload = "auto";
+const setSnd = (url) => { if (SND.src !== url) SND.src = url; };
+const svOf = (vid) => videos.find((x) => x.id == vid.closest(".clip").dataset.id);
+function startClip(vid) {
+  const sv = svOf(vid);
+  if (sv && sv.soundSrc) {
+    vid.muted = true;
+    setSnd(sv.soundSrc);
+    try { SND.currentTime = 0; } catch (err) {}
+    SND.muted = !MIXO.sound; SND.playbackRate = 1;
+    SND.play().catch(() => {});
+  } else { vid.muted = !MIXO.sound; SND.pause(); }
+  vid.play().catch(() => { vid.muted = true; vid.play().catch(() => {}); });
+}
+function resumeCurrent() {
+  const vid = MIXO.current;
+  if (!vid) return;
+  vid.play().catch(() => {});
+  const sv = svOf(vid);
+  if (sv && sv.soundSrc) SND.play().catch(() => {});
+}
+
 // autoplay the video that fills the screen, pause the rest
 function watchVideos() {
   if (io) io.disconnect();
@@ -926,28 +643,41 @@ function watchVideos() {
       const vid = en.target;
       if (en.isIntersecting) {
         MIXO.current = vid;
-        vid.muted = !MIXO.sound;
         vid.closest(".clip").classList.remove("paused");
-        vid.play().catch(() => { vid.muted = true; vid.play().catch(() => {}); });
+        startClip(vid);
       } else {
         vid.pause();
+        if (MIXO.current === vid || !MIXO.current) SND.pause();
         vid.currentTime = 0;
         endHold(vid.closest(".clip"));
       }
     });
   }, { root: $("#feed"), threshold: 0.7 });
-  $$("#feed video.vid").forEach((v) => { v.playsInline = true; v.setAttribute("playsinline", ""); io.observe(v); });
+  $$("#feed video.vid").forEach((v) => {
+    v.playsInline = true; v.setAttribute("playsinline", ""); io.observe(v);
+    v.addEventListener("timeupdate", () => { // video looped: restart its borrowed sound too
+      if (v.currentTime + 0.4 < (v._lt || 0) && MIXO.current === v) { const sv = svOf(v); if (sv && sv.soundSrc) { try { SND.currentTime = 0; } catch (err) {} } }
+      v._lt = v.currentTime;
+    });
+  });
 }
-function pauseAll() { $$("video.vid").forEach((v) => v.pause()); }
-document.addEventListener("visibilitychange", () => { if (document.hidden) pauseAll(); else if ($("#home").classList.contains("on") && MIXO.current) MIXO.current.play().catch(() => {}); });
+function pauseAll() { $$("video.vid").forEach((v) => v.pause()); SND.pause(); }
+document.addEventListener("visibilitychange", () => { if (document.hidden) pauseAll(); else if ($("#home").classList.contains("on")) resumeCurrent(); });
 
 // tap video: first tap turns sound on, later taps pause / play
 function tapVideo(clip) {
   const vid = $("video.vid", clip);
   if (!vid) return;
-  if (vid.muted) { MIXO.sound = true; $$("video.vid").forEach((x) => (x.muted = false)); return; }
-  if (vid.paused) { vid.play().catch(() => {}); clip.classList.remove("paused"); }
-  else { vid.pause(); clip.classList.add("paused"); }
+  const sv = svOf(vid), borrowed = !!(sv && sv.soundSrc);
+  if (!MIXO.sound) {
+    MIXO.sound = true;
+    $$("video.vid").forEach((x) => { const s = svOf(x); x.muted = !!(s && s.soundSrc); });
+    SND.muted = false;
+    toast("Sound on");
+    return;
+  }
+  if (vid.paused) { vid.play().catch(() => {}); if (borrowed) SND.play().catch(() => {}); clip.classList.remove("paused"); }
+  else { vid.pause(); if (borrowed) SND.pause(); clip.classList.add("paused"); }
 }
 
 $("#feed").addEventListener("click", (e) => {
@@ -958,12 +688,17 @@ $("#feed").addEventListener("click", (e) => {
   const act = el.dataset.act;
 
   if (act === "profile") openCreator(v);
-  else if (act === "follow") toggleFollow(v.uid, v.user); else if (act === "like") { if (MIXO.user) toggleLike(v.id); else setLike(v, !state.liked.has(v.id)); }
+  else if (act === "follow") {
+    const on = !state.following.has(v.user);
+    setFollow(v.user, on);
+    toast(on ? "Following @" + v.user : "Unfollowed @" + v.user);
+  } else if (act === "like") setLike(v, !state.liked.has(v.id));
   else if (act === "save") {
     toggleSave(v.id);
-  } else if (act === "comment") { if (MIXO.user) openComments(v.id); else toast("Log in to comment"); }
-  else if (act === "share") sharePost(v.id);
-  else if (act === "more") postMore(v);
+  } else if (act === "comment") toast("Comments come in Stage 4");
+  else if (act === "share") toast("Sharing comes in Stage 4");
+  else if (act === "delete") deletePost(v.id);
+  else if (act === "sound") openSound(v.soundId || v.id);
 });
 
 // ---------- double tap: love animation ----------
@@ -988,8 +723,7 @@ $("#feed").addEventListener("pointerup", (e) => {
   if (now - lastTap < 320 && Math.hypot(e.clientX - lastX, e.clientY - lastY) < 70) {
     clearTimeout(tapTimer);
     const v = videos.find((x) => x.id == clip.dataset.id);
-    if (MIXO.user) { if (!social.likes.has(String(v.id))) toggleLike(v.id); }
-    else if (!state.liked.has(v.id)) setLike(v, true);
+    if (!state.liked.has(v.id)) setLike(v, true);
     burst(clip, e);
     if (navigator.vibrate) navigator.vibrate(12);
     lastTap = 0;
@@ -1006,7 +740,7 @@ try { localStorage.removeItem("mixoCanvas"); } catch (err) {}
 // ---------- hold = 2x speed, pull down = lock (pill fades after 3s) ----------
 let hTimer, pillTimer, hold = false, hLocked = false, hPulled = false, hY = 0, hX = 0, hClip = null, justHeld = false;
 const hVid = (c) => $("video.vid", c);
-function speed(c, r) { const v = hVid(c); if (v) v.playbackRate = r; }
+function speed(c, r) { const v = hVid(c); if (v) { v.playbackRate = r; if (v === MIXO.current) SND.playbackRate = r; } }
 function pillShow(c, text, locked) {
   const p = $(".pill", c); if (!p) return;
   clearTimeout(pillTimer);
@@ -1190,59 +924,50 @@ function ago(d) {
   if (s < 604800) return Math.floor(s / 86400) + "d";
   return new Date(d).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
-const socialErr = (err) => /follows/.test(err.message || "") ? "Run mixo_follows.sql in Supabase first." : /parent_id|image_url|video_url|only the poster/.test(err.message || "") ? "Run mixo_comments.sql in Supabase first."
+const socialErr = (err) => /sound_id/.test(err.message || "") ? "Run mixo_sounds.sql in Supabase first." : /parent_id|image_url/.test(err.message || "") ? "Run mixo_comments.sql in Supabase first."
   : /post_(likes|saves|comments)/.test(err.message || "") ? "Run mixo_social.sql in Supabase first." : niceError(err.message);
 
 async function loadSocial() {
-  social.likes = new Set(); social.saves = new Set(); social.following = new Set(); social.blocked = new Set();
+  social.likes = new Set(); social.saves = new Set();
   if (!MIXO.user || !sb) return;
-  const [l, s, f] = await Promise.all([
+  const [l, s] = await Promise.all([
     sb.from("post_likes").select("post_id").eq("user_id", MIXO.user.id),
     sb.from("post_saves").select("post_id").eq("user_id", MIXO.user.id),
-    sb.from("follows").select("following_id").eq("follower_id", MIXO.user.id),
   ]);
-  if (!f.error) social.following = new Set(f.data.map((r) => r.following_id));
   if (!l.error) social.likes = new Set(l.data.map((r) => String(r.post_id)));
   if (!s.error) social.saves = new Set(s.data.map((r) => String(r.post_id)));
-  const bl = await sb.from("blocks").select("blocked_id").eq("blocker_id", MIXO.user.id);
-  if (!bl.error) social.blocked = new Set(bl.data.map((r) => r.blocked_id));
 }
 
 function normPost(r) {
   const p = (Array.isArray(r.profiles) ? r.profiles[0] : r.profiles) || {};
   const o = { id: r.id, uid: r.user_id, type: r.type, text: r.caption || "", img: r.media_url, time: r.created_at,
     user: p.username || "user", name: p.display_name || p.username || "User", avatar: p.avatar_url,
-    bio: p.bio || "", country: p.country || "", likes: cnt(r.post_likes), comments: cnt(r.post_comments), views: Number(r.views) || 0,
+    bio: p.bio || "", country: p.country || "", likes: cnt(r.post_likes), comments: cnt(r.post_comments),
     profile: { following: 0, followers: 0, likes: 0 } };
   postCache.set(String(r.id), o);
   return o;
 }
 const POST_COLS = "id,user_id,type,caption,media_url,created_at,profiles!user_id(username,display_name,avatar_url,bio,country)";
 async function fetchPosts(types) {
-  const q = (cols) => sb.from("posts").select(cols).in("type", types).order("created_at", { ascending: false }).limit(60);
-  let r = await q(POST_COLS + ",views,post_likes(count),post_comments(count)");
-  if (r.error) r = await q(POST_COLS + ",post_likes(count),post_comments(count)");
-  if (r.error) r = await q(POST_COLS);
+  let r = await sb.from("posts").select(POST_COLS + ",post_likes(count),post_comments(count)").in("type", types).order("created_at", { ascending: false }).limit(60);
+  if (r.error) r = await sb.from("posts").select(POST_COLS).in("type", types).order("created_at", { ascending: false }).limit(60);
   if (r.error) throw r.error;
-  return r.data.map(normPost).filter((p) => !social.blocked.has(p.uid));
+  return r.data.map(normPost);
 }
 async function fetchOne(id) {
-  const q = (cols) => sb.from("posts").select(cols).eq("id", id).maybeSingle();
-  let r = await q(POST_COLS + ",views,post_likes(count),post_comments(count)");
-  if (r.error) r = await q(POST_COLS + ",post_likes(count),post_comments(count)");
-  if (r.error) r = await q(POST_COLS);
+  let r = await sb.from("posts").select(POST_COLS + ",post_likes(count),post_comments(count)").eq("id", id).maybeSingle();
+  if (r.error) r = await sb.from("posts").select(POST_COLS).eq("id", id).maybeSingle();
   if (r.error || !r.data) throw r.error || new Error("Post not found");
   return normPost(r.data);
 }
 
 function postCard(p) {
-  const k = String(p.id);
-  const mine = !!(MIXO.user && p.uid && p.uid === MIXO.user.id);
+  const k = String(p.id), own = MIXO.user && p.uid === MIXO.user.id;
   const av = p.avatar ? `<img src="${esc(p.avatar)}" alt="">` : esc((p.user || "U")[0].toUpperCase());
   return `<article class="pc" data-id="${esc(k)}">
     <div class="pc-av" data-pa="profile">${av}</div>
     <div class="pc-main">
-      ${mine || (MIXO.user && p.uid) ? `<button class="pc-more" data-pa="more" aria-label="${mine ? "Delete or more" : "More"}">${icon("more")}</button>` : ""}
+      ${own ? `<button class="pc-del" data-pa="delete" aria-label="Delete post">${icon("trash")}</button>` : ""}
       <div class="pc-h" data-pa="profile"><b>${esc(p.name)}</b><span>@${esc(p.user)} &middot; ${ago(p.time)}</span></div>
       ${p.text ? `<p class="pc-t">${esc(p.text)}</p>` : ""}
       ${p.type === "photo" ? `<img class="pc-img" src="${esc(p.img)}" alt="" loading="lazy">` : ""}
@@ -1250,7 +975,6 @@ function postCard(p) {
         <button data-pa="comment">${icon("comment")}<span>${p.comments ? fmt(p.comments) : ""}</span></button>
         <button data-pa="like" class="${social.likes.has(k) ? "on" : ""}">${icon("heart")}<span>${p.likes ? fmt(p.likes) : ""}</span></button>
         <button data-pa="save" class="${social.saves.has(k) ? "on" : ""}">${icon("save")}</button>
-        <button data-pa="share">${icon("share")}</button>
       </div>
     </div>
   </article>`;
@@ -1267,11 +991,6 @@ function paintPost(k) {
     }
   });
   $$(`.clip[data-id="${k}"] [data-act="save"]`).forEach((b) => b.classList.toggle("on", social.saves.has(k)));
-  $$(`.clip[data-id="${k}"] [data-act="like"]`).forEach((b) => {
-    b.classList.toggle("on", social.likes.has(k));
-    $(".n", b).textContent = fmt(p ? p.likes : 0);
-  });
-  $$(`.clip[data-id="${k}"] [data-act="comment"] span`).forEach((s) => (s.textContent = fmt(p ? p.comments : 0)));
 }
 async function toggleLike(id) {
   if (!MIXO.user || !sb) return toast("Log in to like");
@@ -1292,6 +1011,7 @@ async function toggleSave(id) {
   const k = String(id), on = !social.saves.has(k);
   on ? social.saves.add(k) : social.saves.delete(k);
   paintPost(k);
+  toast(on ? "Saved" : "Removed from saved");
   const r = on ? await sb.from("post_saves").insert({ post_id: id })
                : await sb.from("post_saves").delete().eq("post_id", id).eq("user_id", MIXO.user.id);
   if (r.error) { on ? social.saves.delete(k) : social.saves.add(k); paintPost(k); toast(socialErr(r.error)); }
@@ -1315,11 +1035,10 @@ function compressImage(file, max, q = 0.85) {
 }
 async function queryPosts(mod) {
   const run = (cols) => mod(sb.from("posts").select(cols));
-  let r = await run(POST_COLS + ",views,post_likes(count),post_comments(count)");
-  if (r.error) r = await run(POST_COLS + ",post_likes(count),post_comments(count)");
+  let r = await run(POST_COLS + ",post_likes(count),post_comments(count)");
   if (r.error) r = await run(POST_COLS);
   if (r.error) throw r.error;
-  return r.data.map(normPost).filter((p) => !social.blocked.has(p.uid));
+  return r.data.map(normPost);
 }
 
 // comments sheet (replies + pictures)
@@ -1343,21 +1062,18 @@ function setReply(id, user) {
 }
 async function loadComments() {
   comList.innerHTML = '<p class="cmt-empty">Loading...</p>';
-  const q = (cols) => sb.from("post_comments").select(cols).eq("post_id", comId).order("created_at", { ascending: true });
-  let r = await q(COM_BASE + ",image_url,parent_id,video_url");
-  if (r.error) r = await q(COM_BASE + ",image_url,parent_id");
-  if (r.error) r = await q(COM_BASE);
+  let r = await sb.from("post_comments").select(COM_BASE + ",image_url,parent_id").eq("post_id", comId).order("created_at", { ascending: true });
+  if (r.error) r = await sb.from("post_comments").select(COM_BASE).eq("post_id", comId).order("created_at", { ascending: true });
   if (r.error) { comList.innerHTML = `<p class="cmt-empty">${esc(socialErr(r.error))}</p>`; return; }
-  r.data = r.data.filter((c) => !social.blocked.has(c.user_id));
+  { const pp = postCache.get(String(comId)); if (pp) { pp.comments = r.data.length; paintPost(comId); } }
   if (!r.data.length) { comList.innerHTML = '<p class="cmt-empty">No comments yet. Be the first.</p>'; return; }
-  const me = MIXO.user && MIXO.user.id, owner = (postCache.get(String(comId)) || {}).uid;
   const kids = {};
   r.data.filter((c) => c.parent_id).forEach((c) => (kids[c.parent_id] = kids[c.parent_id] || []).push(c));
   const one = (c, topId) => {
     const p = (Array.isArray(c.profiles) ? c.profiles[0] : c.profiles) || {};
     const u = p.username || "user";
     const av = p.avatar_url ? `<img src="${esc(p.avatar_url)}" alt="">` : esc(u[0].toUpperCase());
-    return `<div class="cmt"><div class="pc-av sm">${av}</div><div class="cb"><b>@${esc(u)}</b><span>${ago(c.created_at)}</span>${c.body ? `<p>${esc(c.body)}</p>` : ""}${c.image_url ? `<img class="cmt-img" src="${esc(c.image_url)}" alt="" loading="lazy">` : ""}${c.video_url ? `<video class="cmt-vid" src="${esc(c.video_url)}" controls playsinline preload="metadata"></video>` : ""}<button type="button" class="cmt-rep" data-top="${esc(topId)}" data-user="${esc(u)}">Reply</button>${(owner === me && c.user_id !== me) ? `<button type="button" class="cmt-vrep" data-top="${esc(topId)}" data-user="${esc(u)}">Reply with video</button>` : ""}${(c.user_id === me || owner === me) ? `<button type="button" class="cmt-del" data-cid="${esc(c.id)}" data-own="${c.user_id === me ? 1 : 0}" data-img="${esc(c.image_url || "")}" data-vid="${esc(c.video_url || "")}" aria-label="Delete comment">${icon("trash")}</button>` : ""}</div></div>`;
+    return `<div class="cmt"><div class="pc-av sm">${av}</div><div class="cb"><b>@${esc(u)}</b><span>${ago(c.created_at)}</span>${c.body ? `<p>${esc(c.body)}</p>` : ""}${c.image_url ? `<img class="cmt-img" src="${esc(c.image_url)}" alt="" loading="lazy">` : ""}<div class="cmt-acts"><button type="button" class="cmt-rep" data-top="${esc(topId)}" data-user="${esc(u)}">Reply</button>${MIXO.user && c.user_id === MIXO.user.id ? `<button type="button" class="cmt-del" data-cid="${esc(c.id)}" data-img="${esc(c.image_url || "")}">Delete</button>` : ""}</div></div></div>`;
   };
   comList.innerHTML = r.data.filter((c) => !c.parent_id).map((c) =>
     one(c, c.id) + (kids[c.id] ? `<div class="cmt-kids">${kids[c.id].map((k) => one(k, c.id)).join("")}</div>` : "")).join("");
@@ -1373,12 +1089,10 @@ function openComments(id) {
 }
 comSheet.onclick = (e) => { if (e.target.id === "comSheet") comSheet.classList.add("hidden"); };
 comList.addEventListener("click", (e) => {
-  const d = e.target.closest(".cmt-del");
-  if (d) return deleteComment(d);
-  const v = e.target.closest(".cmt-vrep");
-  if (v) return openCamera({ reply: { parent: v.dataset.top, user: v.dataset.user } });
   const b = e.target.closest(".cmt-rep");
-  if (b) setReply(b.dataset.top, b.dataset.user);
+  if (b) { setReply(b.dataset.top, b.dataset.user); return; }
+  const d = e.target.closest(".cmt-del");
+  if (d) deleteComment(d.dataset.cid, d.dataset.img);
 });
 $("#comReply button").onclick = () => { clearReply(); $("#comIn").value = ""; };
 $("#comPrev button").onclick = clearComImg;
@@ -1429,8 +1143,7 @@ function cardTap(e) {
   if (a === "like") toggleLike(id);
   else if (a === "save") toggleSave(id);
   else if (a === "comment") openComments(id);
-  else if (a === "share") sharePost(id);
-  else if (a === "more") postMore(postCache.get(id) || { id });
+  else if (a === "delete") deletePost(id);
   else if (a === "profile") { const p = postCache.get(id); if (p && !(MIXO.user && p.uid === MIXO.user.id)) { $("#viewSheet").classList.add("hidden"); openCreator(p); } }
 }
 $("#viewBody").addEventListener("click", cardTap);
@@ -1441,71 +1154,6 @@ async function openPostView(id) {
     $("#viewBody").innerHTML = postCard(p);
     $("#viewSheet").classList.remove("hidden");
   } catch (err) { toast(socialErr(err)); }
-}
-
-// ---------- delete posts and comments ----------
-function confirmBox(title, text, okLabel) {
-  return new Promise((resolve) => {
-    const s = $("#confirmSheet");
-    const tm = String(title).match(/^(\S+)\s+(.+)$/);
-    $("#cfTitle").innerHTML = tm ? esc(tm[1]) + ' <span class="gr">' + esc(tm[2]) + "</span>" : esc(title);
-    $("#cfText").textContent = text;
-    $("#cfYesTxt").textContent = okLabel || "Delete";
-    s.classList.remove("hidden");
-    const done = (v) => { s.classList.add("hidden"); resolve(v); };
-    $("#cfYes").onclick = () => done(true);
-    $("#cfNo").onclick = () => done(false);
-    s.onclick = (e) => { if (e.target === s) done(false); };
-  });
-}
-const delErr = (err) => /foreign key|violates/i.test((err && err.message) || "") ? "Run mixo_delete.sql in Supabase first." : socialErr(err);
-function storagePath(url, bucket) {
-  const part = String(url || "").split("/object/public/" + bucket + "/")[1];
-  return part ? decodeURIComponent(part.split("?")[0]) : "";
-}
-
-async function deletePost(id) {
-  const k = String(id);
-  const p = postCache.get(k);
-  if (!sb || !MIXO.user || !p || p.uid !== MIXO.user.id) return toast("You can only delete your own posts");
-  const ok = await confirmBox("Delete this post?", "This can't be undone. Its likes and comments are deleted too.", "Delete");
-  if (!ok) return;
-  const r = await sb.from("posts").delete().eq("id", id).eq("user_id", MIXO.user.id).select("id");
-  if (r.error) return toast(delErr(r.error));
-  if (!r.data || !r.data.length) return toast("Couldn't delete. Run mixo_delete.sql in Supabase first.");
-  if (p.type !== "topic") {
-    const bucket = p.type === "video" ? "videos" : "avatars";
-    const path = storagePath(p.img, bucket);
-    if (path) sb.storage.from(bucket).remove([path]);
-  }
-  postCache.delete(k);
-  social.likes.delete(k);
-  social.saves.delete(k);
-  $$(`.clip[data-id="${k}"], .pc[data-id="${k}"], .pt[data-id="${k}"]`).forEach((el) => el.remove());
-  $("#viewSheet").classList.add("hidden");
-  videos = videos.filter((v) => String(v.id) !== k);
-  if (!$$("#feed .clip").length) $("#feed").innerHTML = emptyFeed("No posts yet.<br>Tap + to post the first one.");
-  if ($("#profile").classList.contains("on")) loadMyPosts();
-}
-
-async function deleteComment(btn) {
-  const ok = await confirmBox("Delete this comment?", "Replies to it are deleted too.", "Delete");
-  if (!ok) return;
-  const r = await sb.from("post_comments").delete().eq("id", btn.dataset.cid).select("id");
-  if (r.error) return toast(delErr(r.error));
-  if (!r.data || !r.data.length) return toast("Couldn't delete. Run mixo_delete.sql in Supabase first.");
-  if (btn.dataset.own === "1" && btn.dataset.img) {
-    const path = storagePath(btn.dataset.img, "avatars");
-    if (path) sb.storage.from("avatars").remove([path]);
-  }
-  if (btn.dataset.own === "1" && btn.dataset.vid) {
-    const vp = storagePath(btn.dataset.vid, "videos");
-    if (vp) sb.storage.from("videos").remove([vp]);
-  }
-  const p = postCache.get(String(comId));
-  const c = await sb.from("post_comments").select("id", { count: "exact", head: true }).eq("post_id", comId);
-  if (p && !c.error && typeof c.count === "number") { p.comments = c.count; paintPost(comId); }
-  loadComments();
 }
 
 // ---------- explore: Pictures / Topics / Trending ----------
@@ -1534,7 +1182,7 @@ $("#exGrid").addEventListener("click", cardTap);
 // ---------- profile: Videos / Topics / Photos / Saved ----------
 let pTab = 0, sTab = 0;
 const P_TYPES = ["video", "topic", "photo"];
-const videoTile = (p) => `<div class="pt" data-id="${esc(p.id)}" data-type="video"><video src="${esc(p.img)}#t=0.1" muted playsinline preload="metadata"></video><span class="pt-v">${icon("play")}<span class="vwn">${fmt(p.views || 0)}</span></span>${MIXO.user && p.uid === MIXO.user.id ? `<button class="pt-more" data-pt="more" aria-label="Delete or more">${icon("more")}</button>` : ""}</div>`;
+const videoTile = (p) => `<div class="pt" data-id="${esc(p.id)}" data-type="video"><video src="${esc(p.img)}#t=0.1" muted playsinline preload="metadata"></video>${MIXO.user && p.uid === MIXO.user.id ? `<button class="tile-del" data-del="${esc(p.id)}" aria-label="Delete">${icon("trash")}</button>` : ""}</div>`;
 async function loadMyPosts() {
   const g = $("#pGrid");
   if (!g) return;
@@ -1581,8 +1229,8 @@ $$("#sSub button").forEach((b, i) => b.addEventListener("click", () => {
   loadMyPosts();
 }));
 $("#pGrid").addEventListener("click", (e) => {
-  const mb = e.target.closest(".pt-more");
-  if (mb) { e.stopPropagation(); return deletePost(mb.closest(".pt").dataset.id); }
+  const d = e.target.closest(".tile-del");
+  if (d) { deletePost(d.dataset.del); return; }
   if (e.target.closest(".pc")) return cardTap(e);
   const t = e.target.closest(".pt");
   if (!t) return;
@@ -1591,781 +1239,304 @@ $("#pGrid").addEventListener("click", (e) => {
   if (c) c.scrollIntoView(); else toast("Open it from the feed");
 });
 
-// ============ INBOX: real messages, instant delivery, message requests ============
-const inbox = { convs: [], profiles: new Map(), unread: new Map(), lastKind: new Map(), tab: "msg", loaded: false, error: "" };
-const chat = { uid: null, conv: null, user: null, msgs: [], open: false, sending: false };
-let rtChannel = null, rtOK = false, inboxTimer = null, pollTimer = null;
 
-const meId = () => (MIXO.user ? MIXO.user.id : null);
-const otherOf = (c) => (c.user_a === meId() ? c.user_b : c.user_a);
-const isReq = (c) => c.status === "request" && c.initiator !== meId();   // someone wrote to me first
-const isMsg = (c) => c.status === "accepted" || c.initiator === meId();   // normal chats + ones I started
-
-function inboxErr(e) {
-  const m = (e && e.message) || "";
-  if (/request pending/i.test(m)) return "Request sent. You can write more once they accept.";
-  if (/message not allowed/i.test(m)) return "You can't message this person.";
-  if (/slow down/i.test(m)) return "Slow down a little.";
-  if (/dm closed/i.test(m)) return "This person isn't accepting messages.";
-  if (/does not exist|schema cache|could not find the (table|function)|send_message|respond_request|mark_read/i.test(m)) return "Run mixo_inbox.sql in Supabase first.";
-  return niceError(m);
-}
-
-function setBadge(n) {
-  const b = $("#inBadge");
-  b.textContent = n > 9 ? "9+" : n;
-  b.classList.toggle("hidden", !n);
-}
-
-async function refreshInbox() {
-  if (!sb || !MIXO.user) return renderInbox();
-  const [cr, ur, lr] = await Promise.all([
-    sb.from("conversations").select("*").order("last_message_at", { ascending: false }).limit(100),
-    sb.from("messages").select("conversation_id").is("read_at", null).neq("sender_id", meId()).limit(1000),
-    sb.from("messages").select("conversation_id,kind,created_at").in("kind", ["image", "voice"]).order("created_at", { ascending: false }).limit(300),
-  ]);
-  if (cr.error) { inbox.error = inboxErr(cr.error); return renderInbox(); }
-  inbox.error = "";
-  inbox.convs = (cr.data || []).filter((c) => !social.blocked.has(otherOf(c)));
-  inbox.unread = new Map();
-  (ur.data || []).forEach((r) => inbox.unread.set(r.conversation_id, (inbox.unread.get(r.conversation_id) || 0) + 1));
-  inbox.lastKind = new Map();
-  (lr.data || []).forEach((r) => { if (!inbox.lastKind.has(r.conversation_id)) inbox.lastKind.set(r.conversation_id, r); });
-  const need = [...new Set(inbox.convs.map(otherOf))].filter((id) => !inbox.profiles.has(id));
-  if (need.length) {
-    const pr = await sb.from("profiles").select("id,username,display_name,avatar_url,bio,country").in("id", need);
-    (pr.data || []).forEach((p) => inbox.profiles.set(p.id, p));
-  }
-  inbox.loaded = true;
-  renderInbox();
-  if (chat.open) {
-    const c = inbox.convs.find((x) => otherOf(x) === chat.uid);
-    if (c) { chat.conv = c; renderChat(); }
-  }
-}
-const refreshInboxSoon = () => { clearTimeout(inboxTimer); inboxTimer = setTimeout(refreshInbox, 300); };
-
-// what the Inbox list shows under a name: the text, 📷 for a photo, 🎙️ for a voice note (no "You:")
-function previewOf(c) {
-  const k = inbox.lastKind.get(c.id);
-  if (k && Math.abs(new Date(k.created_at) - new Date(c.last_message_at)) < 5000) return k.kind === "image" ? "📷" : "🎙️";
-  const t = (c.last_message || "").trim();
-  if (/^(📷|🖼️)?\s*(photo|picture|image)s?$/i.test(t)) return "📷";
-  if (/^(🎙️|🎤)?\s*voice(\s*(note|message))?$/i.test(t)) return "🎙️";
-  return t;
-}
-
-function renderInbox() {
-  const reqs = inbox.convs.filter(isReq);
-  const msgs = inbox.convs.filter(isMsg);
-  const unreadMsgs = msgs.reduce((n, c) => n + (inbox.unread.get(c.id) || 0), 0);
-  setBadge(unreadMsgs + reqs.length);
-  $("#inTabMsg").classList.toggle("on", inbox.tab === "msg");
-  $("#inTabReq").classList.toggle("on", inbox.tab === "req");
-  $("#inTabReq").innerHTML = "Requests" + (reqs.length ? ` <i class="bdg">${reqs.length}</i>` : "");
-  const list = inbox.tab === "req" ? reqs : msgs;
-  const box = $("#inList");
-  if (inbox.error) { box.innerHTML = `<p class="hint c">${esc(inbox.error)}</p>`; return; }
-  if (!list.length) {
-    box.innerHTML = `<div class="empty">${icon("inbox").replace('class="ic"', 'class="ic big"')}<p>${inbox.tab === "req" ? "No message requests." : MIXO.user ? "No messages yet.<br>Follow people and say hello." : "Log in to see your messages."}</p></div>`;
-    return;
-  }
-  box.innerHTML = list.map((c) => {
-    const p = inbox.profiles.get(otherOf(c)) || {};
-    const n = inbox.unread.get(c.id) || 0;
-    const prev = previewOf(c);
-    return `<button type="button" class="irow" data-c="${esc(c.id)}"><div class="iav"></div><div class="itx"><b>${esc(p.display_name || p.username || "User")}</b><span class="${n ? "new" : ""}">${esc(prev)}</span></div><div class="imeta"><small>${ago(c.last_message_at)}</small>${n ? `<i class="bdg">${n}</i>` : ""}</div></button>`;
-  }).join("");
-  $$("#inList .iav").forEach((el, i) => { const p = inbox.profiles.get(otherOf(list[i])) || {}; setAv(el, p.avatar_url, p.username); });
-}
-$("#inTabMsg").addEventListener("click", () => { inbox.tab = "msg"; renderInbox(); });
-$("#inTabReq").addEventListener("click", () => { inbox.tab = "req"; renderInbox(); });
-$("#inList").addEventListener("click", (e) => {
-  const row = e.target.closest(".irow");
-  if (!row) return;
-  const c = inbox.convs.find((x) => x.id === row.dataset.c);
-  if (c && inbox.profiles.get(otherOf(c))) openChat(inbox.profiles.get(otherOf(c)));
-});
-
-// ----- chat screen -----
-const CALLS_READY = false;
-const REACTS = ["❤️", "😂", "😮", "😢", "🔥", "👍"];
-const signed = new Map();
-const vr = { rec: null, chunks: [], stream: null, t0: 0, tick: 0, send: false };
-let online = new Set(), presCh = null, vAud = null, vSrc = "", lpTimer = 0, rxFor = null;
-chat.reacts = new Map();
-
-const fmtDur = (s) => Math.floor(s / 60) + ":" + String(Math.round(s % 60)).padStart(2, "0");
-const autoGrow = () => { const t = $("#chatInput"); t.style.height = "46px"; t.style.height = Math.min(Math.max(t.scrollHeight, 46), 120) + "px"; };
-const syncSend = () => $("#chatSend").classList.toggle("mic", !($("#chatInput").value.trim() || vr.rec));
-const iAmLocked = () => { const c = chat.conv, me = meId(); return !!(c && c.initiator === me && c.status !== "accepted" && chat.msgs.some((m) => m.sender_id === me)); };
-const showLimit = () => $("#limitModal").classList.remove("hidden");
-$("#limitOk").onclick = () => $("#limitModal").classList.add("hidden");
-const paintOnline = () => { const on = !!(chat.open && online.has(chat.uid)); $("#chatDot").classList.toggle("hidden", !on); $("#chatStat").textContent = on ? " · Online" : ""; };
-
-async function signMedia(list) {
-  const need = [...new Set(list.filter((m) => m.media_url && !signed.has(m.media_url)).map((m) => m.media_url))];
-  if (!need.length) return;
-  const r = await sb.storage.from("chat").createSignedUrls(need, 3600);
-  (r.data || []).forEach((x) => { if (x.signedUrl) signed.set(x.path, x.signedUrl); });
-}
-async function loadReacts() {
-  const ids = chat.msgs.map((m) => m.id);
-  chat.reacts = new Map();
-  if (!ids.length) return;
-  const r = await sb.from("message_reactions").select("message_id,user_id,emoji").in("message_id", ids);
-  (r.data || []).forEach((x) => setReact(x.message_id, x.user_id, x.emoji));
-}
-function setReact(mid, uid, emoji) {
-  const list = (chat.reacts.get(mid) || []).filter((r) => r.user_id !== uid);
-  if (emoji) list.push({ user_id: uid, emoji });
-  chat.reacts.set(mid, list);
-}
-
-async function openChat(user) {
-  if (!sb || !MIXO.user) return toast("Log in with a real account to send messages.");
-  if (!user || user.id === meId()) return;
-  if (!inbox.loaded) await refreshInbox();
-  inbox.profiles.set(user.id, { ...(inbox.profiles.get(user.id) || {}), ...user });
-  chat.uid = user.id;
-  chat.user = inbox.profiles.get(user.id);
-  chat.conv = inbox.convs.find((c) => otherOf(c) === user.id) || null;
-  chat.msgs = [];
-  chat.reacts = new Map();
-  chat.open = true;
-  $("#chatName").textContent = chat.user.display_name || chat.user.username || "User";
-  $("#chatUser").textContent = "@" + (chat.user.username || "user");
-  setAv($("#chatAv"), chat.user.avatar_url, chat.user.username);
-  $("#chatInput").value = "";
-  autoGrow(); syncSend(); paintOnline();
-  $("#chat").classList.remove("hidden", "recording");
-  renderChat(true);
-  fitChat();
-  await loadChatMsgs();
-}
-function closeChat() {
-  if (vr.rec) voiceStop(false);
-  if (vAud) { vAud.pause(); vAud = null; vSrc = ""; }
-  chat.open = false; chat.uid = null; chat.conv = null; chat.msgs = [];
-  $("#chat").classList.add("hidden");
-  $("#chatInput").blur();
-  $("#reactBar").classList.add("hidden");
-  paintOnline();
-  refreshInboxSoon();
-}
-async function loadChatMsgs() {
-  if (!chat.conv) return;
-  const id = chat.conv.id;
-  const r = await sb.from("messages").select("*").eq("conversation_id", id).order("created_at", { ascending: false }).limit(100);
-  if (!chat.open || !chat.conv || chat.conv.id !== id) return;
-  if (r.error) return toast(inboxErr(r.error));
-  chat.msgs = (r.data || []).reverse();
-  await signMedia(chat.msgs);
-  await loadReacts();
-  if (!chat.open || !chat.conv || chat.conv.id !== id) return;
-  renderChat(true);
-  markRead();
-}
-function addMsg(m) {
-  if (!m || chat.msgs.some((x) => x.id === m.id)) return;
-  chat.msgs.push(m);
-  renderChat(true);
-}
-async function markRead() {
-  if (!chat.open || !chat.conv) return;
-  if (!chat.msgs.some((m) => m.sender_id !== meId() && !m.read_at)) return;
-  chat.msgs.forEach((m) => { if (m.sender_id !== meId()) m.read_at = m.read_at || new Date().toISOString(); });
-  inbox.unread.delete(chat.conv.id);
-  renderInbox();
-  await sb.rpc("mark_read", { p_conv: chat.conv.id });
-}
-
-function bubbleHTML(m) {
-  const mine = m.sender_id === meId();
-  let inner;
-  if (m.kind === "image") inner = `<img src="${esc(signed.get(m.media_url) || "")}" alt="" data-full>`;
-  else if (m.kind === "voice") inner = `<button type="button" class="vplay" data-src="${esc(signed.get(m.media_url) || "")}" aria-label="Play">${icon("play").replace('class="ic"', 'class="ic pl"')}${icon("pause").replace('class="ic"', 'class="ic pa"')}</button><div class="vbar"><i></i></div><span class="vdur">${fmtDur(m.media_secs || 0)}</span>`;
-  else inner = esc(m.body);
-  const groups = {};
-  (chat.reacts.get(m.id) || []).forEach((r) => (groups[r.emoji] = groups[r.emoji] || []).push(r.user_id));
-  const chips = Object.keys(groups).map((e) => `<button type="button" class="rxc ${groups[e].includes(meId()) ? "mine" : ""}" data-e="${esc(e)}">${e}${groups[e].length > 1 ? " " + groups[e].length : ""}</button>`).join("");
-  return `<div class="bw ${mine ? "me" : "them"}" data-m="${esc(m.id)}"><div class="bub ${m.kind || "text"}">${inner}</div>${chips ? `<div class="rx">${chips}</div>` : ""}</div>`;
-}
-function renderChat(stick) {
-  const body = $("#chatBody");
-  const near = body.scrollHeight - body.scrollTop - body.clientHeight < 90;
-  const me = meId();
-  const t = (d) => new Date(d).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-  let html = "";
-  chat.msgs.forEach((m, i) => {
-    const mine = m.sender_id === me, next = chat.msgs[i + 1];
-    html += bubbleHTML(m);
-    if (!next || next.sender_id !== m.sender_id || new Date(next.created_at) - new Date(m.created_at) > 300000) {
-      html += `<div class="bmeta ${mine ? "me" : "them"}">${mine && !next && m.read_at ? "Seen" : t(m.created_at)}</div>`;
-    }
+// ---------- delete posts + comments ----------
+function confirmBox(title, text) {
+  return new Promise((res) => {
+    const sh = $("#confirmSheet");
+    $("#cfTitle").textContent = title; $("#cfText").textContent = text;
+    sh.classList.remove("hidden");
+    const done = (v) => { sh.classList.add("hidden"); res(v); };
+    $("#cfYes").onclick = () => done(true);
+    $("#cfNo").onclick = () => done(false);
+    sh.onclick = (e) => { if (e.target.id === "confirmSheet") done(false); };
   });
-  body.innerHTML = html;
-  $("#chat").classList.toggle("ch-empty", !chat.msgs.length);
-  if (stick || near) body.scrollTop = body.scrollHeight;
-  if (vAud) { const b = $(`.vplay[data-src="${CSS.escape(vSrc)}"]`); if (b) b.classList.toggle("on", !vAud.paused); }
-  const incoming = !!(chat.conv && isReq(chat.conv));
-  $("#chatReq").classList.toggle("hidden", !incoming);
-  $("#chatForm").classList.toggle("hidden", incoming);
 }
-
-// ----- sending: text, photos, voice notes -----
-async function afterSend(data) {
-  await signMedia([data]);
-  if (!chat.open) return;
-  addMsg(data);
-  await refreshInbox();
-  if (chat.open) { chat.conv = inbox.convs.find((c) => c.id === data.conversation_id) || chat.conv; renderChat(true); }
+function removeFile(url) {
+  const m = String(url || "").match(/\/object\/public\/([^/]+)\/(.+)$/);
+  if (m) sb.storage.from(m[1]).remove([decodeURIComponent(m[2].split("?")[0])]).catch(() => {});
 }
-$("#chatForm").addEventListener("submit", async (e) => {
-  e.preventDefault();
-  if (vr.rec) return voiceStop(true);
-  const inp = $("#chatInput"), text = inp.value.trim();
-  if (!text) return voiceStart();
-  if (chat.sending || !chat.uid) return;
-  if (iAmLocked()) return showLimit();
-  chat.sending = true; inp.value = ""; autoGrow(); syncSend();
-  const { data, error } = await sb.rpc("send_message", { p_to: chat.uid, p_body: text, p_kind: "text" });
-  chat.sending = false;
-  if (error) { inp.value = text; autoGrow(); syncSend(); return /request pending/i.test(error.message || "") ? showLimit() : toast(inboxErr(error)); }
-  await afterSend(data);
-});
-$("#chatSend").addEventListener("pointerdown", (e) => e.preventDefault()); // keeps the keyboard open
-$("#chatInput").addEventListener("input", () => { autoGrow(); syncSend(); });
-
-async function sendMedia(kind, blob, ext, type, secs) {
-  if (chat.sending || !chat.uid) return;
-  chat.sending = true;
+async function deletePost(id) {
+  if (!MIXO.user || !sb) return;
+  if (!(await confirmBox("Delete this post?", "It will be removed for good, along with its likes and comments."))) return;
   try {
-    const path = meId() + "/" + (kind === "image" ? "img-" : "voice-") + Date.now() + "." + ext;
-    const up = await sb.storage.from("chat").upload(path, blob, { contentType: type });
-    if (up.error) throw up.error;
-    const { data, error } = await sb.rpc("send_message", { p_to: chat.uid, p_body: "", p_kind: kind, p_media: path, p_secs: secs });
-    if (error) { sb.storage.from("chat").remove([path]); throw error; }
-    await afterSend(data);
+    const r = await sb.from("posts").delete().eq("id", id).eq("user_id", MIXO.user.id).select("id,type,media_url");
+    if (r.error) throw r.error;
+    if (!r.data || !r.data.length) throw new Error("Not allowed. Run mixo_delete.sql in Supabase first.");
+    removeFile(r.data[0].media_url);
+    const k = String(id);
+    postCache.delete(k); social.likes.delete(k); social.saves.delete(k);
+    $$(`.pc[data-id="${k}"]`).forEach((c) => c.remove());
+    $("#viewSheet").classList.add("hidden");
+    if (r.data[0].type === "video") renderFeed();
+    loadMyPosts();
+    if ($("#explore").classList.contains("on")) loadExplore();
+    toast("Deleted");
+  } catch (err) { toast(socialErr(err)); }
+}
+async function deleteComment(cid, img) {
+  if (!(await confirmBox("Delete this comment?", "Any replies to it will be deleted too."))) return;
+  try {
+    const r = await sb.from("post_comments").delete().eq("id", cid).eq("user_id", MIXO.user.id).select("id");
+    if (r.error) throw r.error;
+    if (!r.data || !r.data.length) throw new Error("Couldn't delete that comment.");
+    removeFile(img);
+    loadComments();
+  } catch (err) { toast(socialErr(err)); }
+}
+
+// ---------- camera-first posting ----------
+const cam = { stream: null, rec: null, chunks: [], mode: "15", facing: "environment", delay: 0, torch: false, t0: 0, raf: 0, busy: false, discard: false };
+const camEl = $("#cam"), camVid = $("#camVid"), camRing = $("#camRing"), CIRC = 2 * Math.PI * 38;
+camRing.style.strokeDasharray = CIRC; camRing.style.strokeDashoffset = CIRC;
+const CAM_MAX = { "15": 15, "30": 30 };
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const camOpen = () => !camEl.classList.contains("hidden");
+
+function openCamera() {
+  if (!MIXO.user) return toast("Log in with your account to post");
+  pauseAll();
+  camEl.classList.remove("hidden");
+  setCamMode(cam.mode === "text" ? "15" : cam.mode);
+  startStream();
+}
+function closeCamera() {
+  if (cam.rec) { cam.discard = true; stopRec(); }
+  stopStream();
+  camEl.classList.add("hidden");
+  $("#camCount").classList.add("hidden");
+  if ($("#home").classList.contains("on")) resumeCurrent();
+}
+function stopStream() {
+  if (cam.stream) cam.stream.getTracks().forEach((t) => t.stop());
+  cam.stream = null; camVid.srcObject = null;
+}
+function camFallback(text) {
+  stopStream();
+  const m = $("#camMsg");
+  m.textContent = text;
+  m.classList.remove("hidden");
+}
+async function startStream() {
+  stopStream();
+  $("#camMsg").classList.add("hidden");
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia)
+    return camFallback("Live camera isn't available here. Tap the big button to use your phone camera, or pick from your library.");
+  const v = { facingMode: cam.facing, width: { ideal: 1080 }, height: { ideal: 1920 } };
+  try {
+    try { cam.stream = await navigator.mediaDevices.getUserMedia({ video: v, audio: !pendingSound }); }
+    catch (e1) { cam.stream = await navigator.mediaDevices.getUserMedia({ video: v, audio: false }); }
+    if (!camOpen()) { stopStream(); return; }
+    camVid.srcObject = cam.stream;
+    camVid.classList.toggle("mirror", cam.facing === "user");
+    camVid.play().catch(() => {});
   } catch (err) {
-    const m = (err && err.message) || "";
-    if (/request pending/i.test(m)) showLimit();
-    else toast(/bucket not found/i.test(m) ? "Run mixo_update.sql in Supabase first." : inboxErr(err));
-  } finally { chat.sending = false; }
-}
-$("#chatPlus").onclick = () => { if (iAmLocked()) return showLimit(); $("#chatImg").click(); };
-$("#chatImg").onchange = async (e) => {
-  const f = e.target.files[0];
-  e.target.value = "";
-  if (!f || !chat.uid) return;
-  if (iAmLocked()) return showLimit();
-  try { await sendMedia("image", await compressImage(f, 1280, 0.8), "jpg", "image/jpeg", null); }
-  catch (err) { toast("Couldn't send that photo."); }
-};
-
-async function voiceStart() {
-  if (iAmLocked()) return showLimit();
-  if (!navigator.mediaDevices || !window.MediaRecorder) return toast("Voice notes aren't supported on this browser.");
-  try { vr.stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
-  catch (err) { return toast("Allow the microphone to send voice notes."); }
-  const mime = ["audio/mp4", "audio/webm;codecs=opus", "audio/webm"].find((m) => MediaRecorder.isTypeSupported(m)) || "";
-  vr.rec = new MediaRecorder(vr.stream, mime ? { mimeType: mime } : {});
-  vr.chunks = []; vr.send = false;
-  vr.rec.ondataavailable = (e) => { if (e.data && e.data.size) vr.chunks.push(e.data); };
-  vr.rec.onstop = voiceDone;
-  vr.rec.start(250);
-  vr.t0 = Date.now();
-  $("#chatRecT").textContent = "0:00";
-  $("#chat").classList.add("recording");
-  syncSend();
-  vr.tick = setInterval(() => { const s = (Date.now() - vr.t0) / 1000; $("#chatRecT").textContent = fmtDur(s); if (s >= 120) voiceStop(true); }, 200);
-}
-function voiceStop(send) { vr.send = send; if (vr.rec && vr.rec.state === "recording") vr.rec.stop(); }
-async function voiceDone() {
-  clearInterval(vr.tick);
-  if (vr.stream) vr.stream.getTracks().forEach((t) => t.stop());
-  const secs = (Date.now() - vr.t0) / 1000;
-  const type = ((vr.rec && vr.rec.mimeType) || "audio/mp4").split(";")[0];
-  const chunks = vr.chunks, send = vr.send;
-  vr.rec = null; vr.stream = null;
-  $("#chat").classList.remove("recording");
-  syncSend();
-  if (!send || secs < 0.7) return;
-  await sendMedia("voice", new Blob(chunks, { type }), type.indexOf("mp4") > -1 ? "m4a" : "webm", type, Math.round(secs));
-}
-$("#chatRecX").onclick = () => voiceStop(false);
-
-// ----- playing voice notes, opening photos, emoji reactions -----
-function playVoice(btn) {
-  const src = btn.dataset.src;
-  if (!src) return;
-  if (vAud && vSrc === src) { vAud.paused ? vAud.play() : vAud.pause(); return; }
-  if (vAud) vAud.pause();
-  $$(".vplay.on").forEach((b) => b.classList.remove("on"));
-  vAud = new Audio(src); vSrc = src;
-  const el = () => $(`.vplay[data-src="${CSS.escape(src)}"]`);
-  vAud.onplay = () => { const b = el(); if (b) b.classList.add("on"); };
-  vAud.onpause = () => { const b = el(); if (b) b.classList.remove("on"); };
-  vAud.ontimeupdate = () => { const b = el(); if (b && vAud.duration) b.parentElement.querySelector(".vbar i").style.width = (vAud.currentTime / vAud.duration * 100) + "%"; };
-  vAud.onended = () => { const b = el(); if (b) { b.classList.remove("on"); b.parentElement.querySelector(".vbar i").style.width = "0"; } };
-  vAud.play().catch(() => toast("Couldn't play that voice note."));
-}
-async function reactTo(mid, emoji) {
-  if (!mid || !sb) return;
-  const me = meId(), cur = ((chat.reacts.get(mid) || []).find((r) => r.user_id === me) || {}).emoji;
-  setReact(mid, me, cur === emoji ? null : emoji);
-  renderChat();
-  const r = await sb.rpc("react_message", { p_msg: mid, p_emoji: emoji });
-  if (r.error) { setReact(mid, me, cur || null); renderChat(); toast(/does not exist|schema cache|could not find/i.test(r.error.message || "") ? "Run mixo_update.sql in Supabase first." : inboxErr(r.error)); }
-}
-async function deleteMsg(mid) {
-  const m = chat.msgs.find((x) => x.id === mid);
-  if (!m || m.sender_id !== meId()) return;
-  if (!(await confirmBox("Delete message?", "It's removed for everyone. They won't be told.", "Delete"))) return;
-  chat.msgs = chat.msgs.filter((x) => x.id !== mid);
-  renderChat();
-  const r = await sb.rpc("delete_message", { p_msg: mid });
-  if (r.error) {
-    chat.msgs.push(m); chat.msgs.sort((a, b) => new Date(a.created_at) - new Date(b.created_at)); renderChat();
-    return toast(/does not exist|schema cache|could not find/i.test(r.error.message || "") ? "Run mixo_delete_message.sql in Supabase first." : inboxErr(r.error));
-  }
-  if (m.media_url) sb.storage.from("chat").remove([m.media_url]);
-  refreshInbox();
-}
-function hideReactBar() { $("#reactBar").classList.add("hidden"); }
-function showReactBar(bw) {
-  rxFor = bw.dataset.m;
-  const bar = $("#reactBar");
-  bar.innerHTML = REACTS.map((e) => `<button type="button" data-e="${e}">${e}</button>`).join("")
-    + (bw.classList.contains("me") ? `<button type="button" class="rdel" data-del="1" aria-label="Delete for everyone">${icon("trash")}</button>` : "");
-  bar.classList.remove("hidden");
-  const r = bw.getBoundingClientRect(), w = bar.offsetWidth;
-  bar.style.left = Math.min(Math.max(8, r.left + r.width / 2 - w / 2), innerWidth - w - 8) + "px";
-  bar.style.top = Math.max(80, r.top - 58) + "px";
-  if (navigator.vibrate) navigator.vibrate(10);
-}
-const chatBody = $("#chatBody");
-chatBody.addEventListener("pointerdown", (e) => {
-  const bw = e.target.closest(".bw");
-  if (!bw || e.target.closest(".rxc") || e.target.closest(".vplay")) return;
-  clearTimeout(lpTimer);
-  lpTimer = setTimeout(() => showReactBar(bw), 380);
-});
-["pointerup", "pointermove", "pointercancel", "scroll"].forEach((ev) => chatBody.addEventListener(ev, () => clearTimeout(lpTimer), true));
-chatBody.addEventListener("contextmenu", (e) => e.preventDefault());
-chatBody.addEventListener("dblclick", (e) => { const bw = e.target.closest(".bw"); if (bw) reactTo(bw.dataset.m, "❤️"); });
-chatBody.addEventListener("click", (e) => {
-  const v = e.target.closest(".vplay");
-  if (v) return playVoice(v);
-  const chip = e.target.closest(".rxc");
-  if (chip) return reactTo(chip.closest(".bw").dataset.m, chip.dataset.e);
-  const img = e.target.closest("img[data-full]");
-  if (img) { $("#lbVid").classList.add("hidden"); $("#lbImg").classList.remove("hidden"); $("#lbImg").src = img.src; $("#lightbox").classList.remove("hidden"); }
-});
-$("#lightbox").onclick = (e) => {
-  if (e.target.id === "lbVid") return;
-  const v = $("#lbVid"); v.pause(); v.removeAttribute("src");
-  $("#lightbox").classList.add("hidden");
-};
-$("#reactBar").addEventListener("click", (e) => {
-  const b = e.target.closest("button");
-  if (!b) return;
-  hideReactBar();
-  if (b.dataset.del) return deleteMsg(rxFor);
-  reactTo(rxFor, b.dataset.e);
-});
-document.addEventListener("pointerdown", (e) => { if (!e.target.closest("#reactBar")) hideReactBar(); }, true);
-
-// ----- header buttons -----
-$("#chatBack").onclick = closeChat;
-$("#chatCall").onclick = () => toast(CALLS_READY ? "Calling..." : "Calls aren't available yet.");
-$("#chatWho").onclick = () => {
-  const p = chat.user;
-  if (!p) return;
-  closeChat();
-  openCreator({ uid: p.id, user: p.username, name: p.display_name || p.username, avatar: p.avatar_url,
-    bio: p.bio || "", country: p.country || "", profile: { following: 0, followers: 0, likes: 0 } });
-};
-async function answerReq(ok) {
-  if (!chat.conv) return;
-  const id = chat.conv.id;
-  const r = await sb.rpc("respond_request", { p_conv: id, p_accept: ok });
-  if (r.error) return toast(inboxErr(r.error));
-  await refreshInbox();
-  if (ok) { loadChatMsgs(); }
-  else { closeChat(); }
-}
-$("#chatAccept").onclick = () => answerReq(true);
-$("#chatReject").onclick = () => answerReq(false);
-
-// keep the input above the phone keyboard
-function fitChat() {
-  const vv = window.visualViewport;
-  if (!vv || !chat.open) return;
-  const c = $("#chat");
-  c.style.height = vv.height + "px";
-  c.style.top = vv.offsetTop + "px";
-  chatBody.scrollTop = chatBody.scrollHeight;
-}
-if (window.visualViewport) { visualViewport.addEventListener("resize", fitChat); visualViewport.addEventListener("scroll", fitChat); }
-
-// Message button on someone's profile
-$("#cMsg").onclick = () => {
-  const uid = $("#cFollow").dataset.uid;
-  if (!MIXO.user || !uid) return toast("Log in with a real account to send messages.");
-  const country = $("#cCountry").textContent;
-  openChat({ id: uid, username: $("#cUser").textContent.replace("@", ""), display_name: $("#cName").textContent,
-    avatar_url: ($("#cAvatar img") || {}).src || "", bio: $("#cBio").textContent, country: country === "Not set" ? "" : country });
-};
-
-// ----- instant delivery (Supabase Realtime), plus the green "online" dot -----
-async function onMsgEvent(p) {
-  if (p.eventType === "DELETE") {   // the other person deleted a message: it just disappears, no notice
-    const id = p.old && p.old.id;
-    if (id && chat.msgs.some((x) => x.id === id)) { chat.msgs = chat.msgs.filter((x) => x.id !== id); renderChat(); }
-    refreshInboxSoon();
-    return;
-  }
-  const m = p.new;
-  if (!m || !m.id) return;
-  if (p.eventType === "UPDATE") {
-    const x = chat.msgs.find((q) => q.id === m.id);
-    if (x) { x.read_at = m.read_at; renderChat(); }
-    return;
-  }
-  if (p.eventType !== "INSERT") return;
-  if (chat.open) {
-    if (!chat.conv && m.sender_id === chat.uid) {
-      await refreshInbox();
-      chat.conv = inbox.convs.find((c) => c.id === m.conversation_id) || chat.conv;
-    }
-    if (chat.conv && m.conversation_id === chat.conv.id) {
-      await signMedia([m]);
-      addMsg(m);
-      if (m.sender_id !== meId()) markRead();
-    }
-  }
-  refreshInboxSoon();
-}
-function onReactEvent(p) {
-  const row = p.eventType === "DELETE" ? p.old : p.new;
-  if (!row || !row.message_id || !chat.open || !chat.msgs.some((m) => m.id === row.message_id)) return;
-  setReact(row.message_id, row.user_id, p.eventType === "DELETE" ? null : row.emoji);
-  renderChat();
-}
-function startInbox() {
-  if (!sb || !MIXO.user || rtChannel) return;
-  refreshInbox();
-  rtChannel = sb.channel("inbox-" + meId())
-    .on("postgres_changes", { event: "*", schema: "public", table: "messages" }, onMsgEvent)
-    .on("postgres_changes", { event: "*", schema: "public", table: "conversations" }, refreshInboxSoon)
-    .on("postgres_changes", { event: "*", schema: "public", table: "message_reactions" }, onReactEvent)
-    .subscribe((s) => { rtOK = s === "SUBSCRIBED"; });
-  presCh = sb.channel("mixo-online", { config: { presence: { key: meId() } } });
-  presCh.on("presence", { event: "sync" }, () => { online = new Set(Object.keys(presCh.presenceState())); paintOnline(); })
-    .subscribe(async (s) => { if (s === "SUBSCRIBED") await presCh.track({ at: Date.now() }); });
-  pollTimer = setInterval(() => {
-    if (rtOK || document.hidden) return;
-    refreshInbox();
-    if (chat.open) loadChatMsgs();
-  }, 8000);
-}
-function stopInbox() {
-  if (sb) { if (rtChannel) sb.removeChannel(rtChannel); if (presCh) sb.removeChannel(presCh); }
-  rtChannel = null; presCh = null; rtOK = false; online = new Set();
-  clearInterval(pollTimer);
-  inbox.convs = []; inbox.unread = new Map(); inbox.loaded = false; inbox.error = ""; inbox.tab = "msg";
-  closeChat();
-  renderInbox();
-}
-document.addEventListener("visibilitychange", () => {
-  if (document.hidden || !MIXO.user) return;
-  refreshInbox();
-  if (chat.open) loadChatMsgs();
-});
-renderInbox();
-
-// ============ SAFETY: block, report, privacy settings, delete account ============
-const safeErr = (e) => {
-  const m = (e && e.message) || "";
-  return /does not exist|schema cache|could not find|dm_privacy|block_user|report_content|delete_my_account|"blocks"/i.test(m)
-    ? "Run mixo_safety.sql in Supabase first." : /slow down/i.test(m) ? "Slow down a little." : niceError(m);
-};
-const isBlocked = (uid) => social.blocked.has(uid);
-function postMore(p) {
-  if (!p) return;
-  if (MIXO.user && p.uid === MIXO.user.id) deletePost(p.id);
-  else openActions({ uid: p.uid, user: p.user, postId: p.id });
-}
-
-// ----- the ... menu: report / block -----
-let actCtx = null;
-function openActions(ctx) {
-  if (!MIXO.user || !sb) return toast("Log in with a real account first.");
-  if (!ctx || !ctx.uid) return toast("Not available in the preview.");
-  if (ctx.uid === meId()) return;
-  actCtx = ctx;
-  const user = ctx.user || "user", blocked = isBlocked(ctx.uid);
-  $("#actTitle").textContent = "@" + user;
-  $("#actBody").innerHTML =
-    (ctx.postId ? `<button type="button" class="opt" data-a="rpost">${icon("flag")}Report this post</button>` : "") +
-    `<button type="button" class="opt" data-a="ruser">${icon("flag")}Report @${esc(user)}</button>` +
-    `<button type="button" class="opt danger" data-a="block">${icon("block")}${blocked ? "Unblock" : "Block"} @${esc(user)}</button>` +
-    `<button type="button" class="opt" data-a="x">Cancel</button>`;
-  $("#actSheet").classList.remove("hidden");
-}
-$("#actSheet").addEventListener("click", (e) => {
-  const s = $("#actSheet");
-  if (e.target === s) return s.classList.add("hidden");
-  const b = e.target.closest("[data-a]");
-  if (!b) return;
-  s.classList.add("hidden");
-  const c = actCtx;
-  if (!c) return;
-  const a = b.dataset.a, user = c.user || "user";
-  if (a === "rpost") openReport({ uid: c.uid, user, type: "post", id: String(c.postId) });
-  else if (a === "ruser") openReport({ uid: c.uid, user, type: "user", id: c.uid });
-  else if (a === "block") isBlocked(c.uid) ? unblockUser(c.uid, user) : blockUserFlow(c.uid, user);
-});
-$("#cMore").onclick = () => openActions({ uid: $("#cFollow").dataset.uid, user: $("#cUser").textContent.replace("@", "") });
-$("#chatMore").onclick = () => openActions({ uid: chat.uid, user: (chat.user || {}).username });
-
-async function blockUserFlow(uid, user) {
-  const ok = await confirmBox("Block @" + user + "?", "They can't message or follow you, and you won't see their posts. They aren't told.", "Block");
-  if (!ok) return;
-  const r = await sb.rpc("block_user", { p_user: uid });
-  if (r.error) return toast(safeErr(r.error));
-  social.blocked.add(uid);
-  social.following.delete(uid);
-  videos = videos.filter((v) => v.uid !== uid);
-  $$(".clip[data-id], .pc[data-id], .pt[data-id]").forEach((el) => {
-    const p = postCache.get(el.dataset.id);
-    if (p && p.uid === uid) el.remove();
-  });
-  if (chat.open && chat.uid === uid) closeChat();
-  if ($("#creator").classList.contains("on") && $("#cFollow").dataset.uid === uid) go(state.prev && state.prev !== "creator" ? state.prev : "home");
-  if (!$$("#feed .clip").length) $("#feed").innerHTML = emptyFeed("No posts yet.<br>Tap + to post the first one.");
-  refreshInbox();
-  toast("Blocked @" + user);
-}
-async function unblockUser(uid, user) {
-  const r = await sb.rpc("unblock_user", { p_user: uid });
-  if (r.error) return toast(safeErr(r.error));
-  social.blocked.delete(uid);
-  toast("Unblocked @" + user);
-  refreshInbox();
-  renderFeed();
-}
-
-// ----- report -----
-const REASONS = ["Spam", "Harassment or bullying", "Nudity or sexual content", "Violence or hate", "Scam or fake account", "Something else"];
-let rep = null, repReason = "";
-function openReport(ctx) {
-  rep = ctx; repReason = "";
-  $("#repWho").textContent = ctx.type === "post" ? "Report a post by @" + ctx.user : "Report @" + ctx.user;
-  $("#repReasons").innerHTML = REASONS.map((r) => `<button type="button" data-r="${esc(r)}">${esc(r)}</button>`).join("");
-  $("#repDetails").value = "";
-  $("#repMsg").textContent = "";
-  $("#reportSheet").classList.remove("hidden");
-}
-$("#repReasons").addEventListener("click", (e) => {
-  const b = e.target.closest("button");
-  if (!b) return;
-  repReason = b.dataset.r;
-  $$("#repReasons button").forEach((x) => x.classList.toggle("on", x === b));
-});
-$("#repCancel").onclick = () => $("#reportSheet").classList.add("hidden");
-$("#reportSheet").addEventListener("click", (e) => { if (e.target.id === "reportSheet") $("#reportSheet").classList.add("hidden"); });
-$("#repSend").onclick = async () => {
-  if (!rep) return;
-  if (!repReason) { $("#repMsg").textContent = "Pick a reason."; return; }
-  $("#repMsg").textContent = "Sending...";
-  const r = await sb.rpc("report_content", { p_user: rep.uid, p_type: rep.type, p_id: rep.id, p_reason: repReason, p_details: $("#repDetails").value.trim() });
-  if (r.error) { $("#repMsg").textContent = safeErr(r.error); return; }
-  $("#reportSheet").classList.add("hidden");
-  toast("Thanks. We'll review your report.");
-};
-
-// ----- settings: blocked list, log out, delete account -----
-$("#setBtn").onclick = () => {
-  if (!MIXO.user) return toast("Log in with a real account first.");
-  $("#setSheet").classList.remove("hidden");
-};
-$("#setClose").onclick = () => $("#setSheet").classList.add("hidden");
-$("#setSheet").addEventListener("click", (e) => { if (e.target.id === "setSheet") $("#setSheet").classList.add("hidden"); });
-
-$("#setBlocked").onclick = async () => {
-  $("#setSheet").classList.add("hidden");
-  const body = $("#blkBody");
-  body.innerHTML = '<p class="hint">Loading...</p>';
-  $("#blkSheet").classList.remove("hidden");
-  const r = await sb.from("blocks").select("blocked_id").eq("blocker_id", meId());
-  if (r.error) { body.innerHTML = `<p class="hint">${esc(safeErr(r.error))}</p>`; return; }
-  const ids = r.data.map((x) => x.blocked_id);
-  if (!ids.length) { body.innerHTML = '<p class="hint">You haven\'t blocked anyone.</p>'; return; }
-  const pr = await sb.from("profiles").select("id,username,display_name,avatar_url").in("id", ids);
-  const list = pr.data || [];
-  body.innerHTML = list.map((p) => `<div class="lrow"><div class="lav"></div><div class="ltx"><b>${esc(p.display_name || p.username)}</b><span>@${esc(p.username)}</span></div><button type="button" class="pbtn line" data-u="${esc(p.id)}" data-n="${esc(p.username)}">Unblock</button></div>`).join("");
-  $$("#blkBody .lav").forEach((el, i) => setAv(el, list[i].avatar_url, list[i].username));
-};
-$("#blkBody").addEventListener("click", async (e) => {
-  const b = e.target.closest("[data-u]");
-  if (!b) return;
-  await unblockUser(b.dataset.u, b.dataset.n);
-  if (!isBlocked(b.dataset.u)) {
-    b.closest(".lrow").remove();
-    if (!$("#blkBody .lrow")) $("#blkBody").innerHTML = '<p class="hint">You haven\'t blocked anyone.</p>';
-  }
-});
-$("#blkSheet").addEventListener("click", (e) => { if (e.target.id === "blkSheet") $("#blkSheet").classList.add("hidden"); });
-
-$("#setDelete").onclick = async () => {
-  $("#setSheet").classList.add("hidden");
-  if (!(await confirmBox("Delete account?", "Your profile, posts, comments, messages and followers are deleted for good. This can't be undone.", "Delete"))) return;
-  if (!(await confirmBox("Really delete?", "Last chance. Everything will be gone.", "Yes, delete"))) return;
-  toast("Deleting...");
-  try { // remove my uploaded videos and pictures first
-    for (const bucket of ["videos", "avatars", "chat"]) {
-      const ls = await sb.storage.from(bucket).list(meId(), { limit: 1000 });
-      if (ls.data && ls.data.length) await sb.storage.from(bucket).remove(ls.data.map((f) => meId() + "/" + f.name));
-    }
-  } catch (e) {}
-  const r = await sb.rpc("delete_my_account");
-  if (r.error) return toast(safeErr(r.error));
-  await $("#logoutBtn").onclick();
-  toast("Your account was deleted.");
-};
-
-
-// ============ SHARE ============
-async function sharePost(id) {
-  const p = postCache.get(String(id)) || {};
-  const url = location.href.split("#")[0] + "#post=" + encodeURIComponent(id);
-  try {
-    if (navigator.share) { await navigator.share({ title: "MIXO", text: p.text || "Watch this on MIXO", url }); return; }
-  } catch (e) { if (e && e.name === "AbortError") return; }
-  try { await navigator.clipboard.writeText(url); toast("Link copied"); }
-  catch (e) {
-    const t = document.createElement("textarea");
-    t.value = url; document.body.appendChild(t); t.select();
-    try { document.execCommand("copy"); toast("Link copied"); } catch (e2) { toast("Couldn't copy the link."); }
-    t.remove();
+    camFallback("Camera access is blocked. Allow the camera for this site, or tap the big button to use your phone camera.");
   }
 }
-function openFromHash() {
-  const m = location.hash.match(/^#post=(.+)$/);
-  if (!m || !MIXO.user) return;
-  history.replaceState(null, "", location.href.split("#")[0]);
-  openPostView(decodeURIComponent(m[1]));
+function setCamMode(m) {
+  if (m === "text") { closeCamera(); openTopic(); return; }
+  cam.mode = m;
+  $$("#camModes button").forEach((b) => b.classList.toggle("on", b.dataset.m === m));
+  const photo = m === "photo";
+  $("#camShutter").classList.toggle("photo", photo);
+  $("#camPick").accept = photo ? "image/*" : "video/*";
+  $("#camShot").accept = photo ? "image/*" : "video/*";
 }
+$$("#camModes button").forEach((b) => b.addEventListener("click", () => { if (!cam.rec) setCamMode(b.dataset.m); }));
+$("#camClose").onclick = () => { pendingSound = null; paintSoundChips(); closeCamera(); };
+$("#camSound").onclick = () => { pendingSound = null; paintSoundChips(); toast("Sound removed"); if (camOpen()) startStream(); };
+$("#camFlip").onclick = () => { if (cam.rec || cam.busy) return; cam.facing = cam.facing === "user" ? "environment" : "user"; cam.torch = false; $("#camFlash").classList.remove("on"); startStream(); };
+$("#camFlash").onclick = async () => {
+  const tr = cam.stream && cam.stream.getVideoTracks()[0];
+  const caps = tr && tr.getCapabilities ? tr.getCapabilities() : {};
+  if (!caps.torch) return toast("Flash isn't available on this camera");
+  cam.torch = !cam.torch;
+  await tr.applyConstraints({ advanced: [{ torch: cam.torch }] }).catch(() => {});
+  $("#camFlash").classList.toggle("on", cam.torch);
+};
+$("#camTimer").onclick = () => { cam.delay = cam.delay ? 0 : 3; $("#camTimer").classList.toggle("on", !!cam.delay); toast(cam.delay ? "3 second timer on" : "Timer off"); };
+$("#camGallery").onclick = () => $("#camPick").click();
 
-// ============ VIEWS (footprints) ============
-const viewedSet = new Set();
-function paintViews(id) {
-  const p = postCache.get(String(id));
-  if (!p) return;
-  $$(`[data-id="${id}"] .vwn`).forEach((el) => (el.textContent = fmt(p.views || 0)));
+function feedInput(input, file) {
+  const dt = new DataTransfer();
+  dt.items.add(file);
+  input.files = dt.files;
+  input.dispatchEvent(new Event("change"));
 }
-async function recordView(id) {
-  id = String(id);
-  if (!MIXO.user || !sb || viewedSet.has(id)) return;
-  const p = postCache.get(id);
-  if (!p || p.uid === MIXO.user.id) return;
-  viewedSet.add(id);
-  const r = await sb.rpc("record_view", { p_post: id });
-  if (!r.error && r.data === true) { p.views = (p.views || 0) + 1; paintViews(id); }
+function finishCapture(file) {
+  closeCamera();
+  const isVid = /^video/.test(file.type) || /\.(mp4|mov|m4v|webm)$/i.test(file.name);
+  if (isVid) { openPost(); feedInput($("#postFile"), file); }
+  else { openPhoto(); feedInput($("#photoFile"), file); }
 }
-if ("IntersectionObserver" in window) {
-  const viewObs = new IntersectionObserver((es) => es.forEach((en) => {
-    if (!en.isIntersecting) return;
-    viewObs.unobserve(en.target);
-    recordView(en.target.dataset.id);
-  }), { threshold: 0.6 });
-  const watch = (n) => {
-    if (n.nodeType !== 1) return;
-    if (n.matches(".clip[data-id], .pc[data-id]")) viewObs.observe(n);
-    n.querySelectorAll(".clip[data-id], .pc[data-id]").forEach((x) => viewObs.observe(x));
+["camPick", "camShot"].forEach((id) => { $("#" + id).onchange = (e) => { const f = e.target.files[0]; if (f) finishCapture(f); }; });
+
+$("#camShutter").onclick = async () => {
+  if (cam.busy) return;
+  if (!cam.stream) { $("#camShot").click(); return; }
+  if (cam.rec) { stopRec(); return; }
+  if (cam.delay) {
+    cam.busy = true;
+    const c = $("#camCount");
+    for (let n = cam.delay; n > 0 && camOpen(); n--) { c.textContent = n; c.classList.remove("hidden"); await sleep(1000); }
+    c.classList.add("hidden");
+    cam.busy = false;
+    if (!camOpen()) return;
+  }
+  cam.mode === "photo" ? snap() : startRec();
+};
+function snap() {
+  const w = camVid.videoWidth, h = camVid.videoHeight;
+  if (!w) return toast("Camera isn't ready yet");
+  const cv = document.createElement("canvas");
+  cv.width = w; cv.height = h;
+  const x = cv.getContext("2d");
+  if (cam.facing === "user") { x.translate(w, 0); x.scale(-1, 1); }
+  x.drawImage(camVid, 0, 0, w, h);
+  cv.toBlob((b) => { if (b) finishCapture(new File([b], "photo.jpg", { type: "image/jpeg" })); }, "image/jpeg", 0.9);
+}
+function startRec() {
+  if (!window.MediaRecorder) return toast("Recording isn't supported here. Use the library button.");
+  const types = ["video/mp4", "video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm"];
+  const type = types.find((t) => MediaRecorder.isTypeSupported(t));
+  cam.chunks = [];
+  try { cam.rec = new MediaRecorder(cam.stream, type ? { mimeType: type } : undefined); }
+  catch (err) { cam.rec = null; return toast("Couldn't start recording on this device."); }
+  cam.rec.ondataavailable = (e) => { if (e.data && e.data.size) cam.chunks.push(e.data); };
+  cam.rec.onstop = () => {
+    cancelAnimationFrame(cam.raf);
+    const t = (cam.rec && cam.rec.mimeType) || type || "video/mp4";
+    const blob = new Blob(cam.chunks, { type: t });
+    cam.rec = null;
+    if (pendingSound) SND.pause();
+    $("#camShutter").classList.remove("rec");
+    $("#camRec").classList.add("hidden");
+    camRing.style.strokeDashoffset = CIRC;
+    if (cam.discard) { cam.discard = false; return; }
+    const ext = t.includes("mp4") ? "mp4" : "webm";
+    finishCapture(new File([blob], "clip." + ext, { type: t.split(";")[0] }));
   };
-  new MutationObserver((ms) => ms.forEach((m) => m.addedNodes.forEach(watch))).observe($("#app"), { childList: true, subtree: true });
+  cam.rec.start(250);
+  if (pendingSound) { setSnd(pendingSound.url); try { SND.currentTime = 0; } catch (err) {} SND.muted = false; SND.playbackRate = 1; SND.play().catch(() => {}); }
+  cam.t0 = performance.now();
+  $("#camShutter").classList.add("rec");
+  $("#camRec").classList.remove("hidden");
+  const max = CAM_MAX[cam.mode] || 15;
+  const tick = () => {
+    const el = (performance.now() - cam.t0) / 1000;
+    camRing.style.strokeDashoffset = CIRC * (1 - Math.min(el / max, 1));
+    $("#camRec").textContent = "0:" + String(Math.floor(el)).padStart(2, "0");
+    if (el >= max) stopRec(); else cam.raf = requestAnimationFrame(tick);
+  };
+  tick();
 }
+function stopRec() { if (cam.rec && cam.rec.state !== "inactive") cam.rec.stop(); }
+document.addEventListener("visibilitychange", () => { if (document.hidden && camOpen()) closeCamera(); });
 
-// ============ VIDEO REPLIES (only the person who posted the video) ============
-$("#vrFile").onchange = (e) => {
-  const f = e.target.files[0];
-  e.target.value = "";
-  if (!f || !cam.reply) return;
-  const r = cam.reply;
-  camClose();
-  sendVideoReply(r, f);
+
+// ---------- sound pages: tap the disc, use someone's sound ----------
+function paintSoundChips() {
+  const t = pendingSound ? "Original sound \u00b7 @" + pendingSound.user : "";
+  $("#camSound").classList.toggle("hidden", !pendingSound);
+  $("#camSound span").textContent = t;
+  $("#postSound").classList.toggle("hidden", !pendingSound);
+  $("#postSound span").textContent = pendingSound ? "Using sound: " + t : "";
+}
+$("#postSound button").onclick = () => { pendingSound = null; paintSoundChips(); };
+
+const spEl = $("#soundPage");
+let spRoot = null, spPosts = new Map(), spPlaying = false;
+const profOf = (x) => (Array.isArray(x.profiles) ? x.profiles[0] : x.profiles) || {};
+function spPlay(on) {
+  spPlaying = !!(on && spRoot);
+  if (spPlaying) { setSnd(spRoot.url); try { SND.currentTime = 0; } catch (err) {} SND.muted = false; SND.playbackRate = 1; SND.play().catch(() => {}); }
+  else SND.pause();
+  $("#spPlayBtn use").setAttribute("href", spPlaying ? "#i-pause" : "#i-play");
+  $("#spPreview use").setAttribute("href", spPlaying ? "#i-pause" : "#i-play");
+  $("#spPreview span").textContent = spPlaying ? "Pause" : "Play sound";
+}
+function paintSpSave() {
+  const on = spRoot && social.saves.has(String(spRoot.id));
+  $("#spSave").classList.toggle("on", !!on);
+  $("#spSave span").textContent = on ? "Saved" : "Save";
+}
+function spTile(p, orig, wide) {
+  const u = esc(p.media_url);
+  return `<div class="sp-tile${wide ? " wide" : ""}" data-id="${esc(p.id)}"><div class="sp-in"><video class="sp-bg" src="${u}#t=0.1" muted playsinline preload="metadata"></video><video class="sp-fg" src="${u}#t=0.1" muted playsinline preload="metadata"></video>${orig ? '<span class="sp-badge">Original</span>' : ""}</div></div>`;
+}
+async function openSound(rootId) {
+  if (!sb || !MIXO.user) return toast("Log in to open sounds");
+  pauseAll();
+  spRoot = null;
+  spEl.classList.remove("hidden");
+  spPlay(false);
+  $("#spGrid").innerHTML = '<p class="sp-empty">Loading...</p>';
+  try {
+    const cols = "id,user_id,media_url,created_at,profiles!user_id(username,display_name,avatar_url)";
+    const rr = await sb.from("posts").select(cols).eq("id", rootId).maybeSingle();
+    if (rr.error || !rr.data) throw rr.error || new Error("This sound isn't available anymore.");
+    let list = [];
+    const ur = await sb.from("posts").select(cols + ",sound_id").eq("sound_id", rootId).order("created_at", { ascending: false }).limit(40);
+    if (!ur.error) list = ur.data;
+    const rp = profOf(rr.data);
+    spRoot = { id: rr.data.id, url: rr.data.media_url, uid: rr.data.user_id, user: rp.username || "user", name: rp.display_name || rp.username || "User", avatar: rp.avatar_url };
+    spPosts = new Map([[String(rr.data.id), { ...rr.data, isRoot: true }]]);
+    list.forEach((x) => spPosts.set(String(x.id), x));
+    const all = [rr.data, ...list];
+    $("#spCount").textContent = all.length + (all.length === 1 ? " post" : " posts");
+    $("#spUser span").textContent = "@" + spRoot.user;
+    $("#spAv").innerHTML = spRoot.avatar ? `<img src="${esc(spRoot.avatar)}" alt="">` : esc(spRoot.user[0].toUpperCase());
+    paintSpSave();
+    $("#spGrid").innerHTML = all.map((p, i) => spTile(p, i === 0, all.length % 2 === 1 && i === all.length - 1)).join("");
+  } catch (err) { $("#spGrid").innerHTML = `<p class="sp-empty">${esc(socialErr(err))}</p>`; }
+}
+function closeSound() {
+  spPlay(false);
+  closeVideoView();
+  spEl.classList.add("hidden");
+  if ($("#home").classList.contains("on")) resumeCurrent();
+}
+$("#spBack").onclick = closeSound;
+$("#spPlayBtn").onclick = () => spPlay(!spPlaying);
+$("#spPreview").onclick = () => spPlay(!spPlaying);
+$("#spSave").onclick = () => { if (!spRoot) return; toggleSave(spRoot.id); paintSpSave(); };
+$("#spUser").onclick = () => {
+  if (!spRoot) return;
+  const o = { id: spRoot.id, uid: spRoot.uid, user: spRoot.user, name: spRoot.name, avatar: spRoot.avatar, bio: "", country: "", profile: { following: 0, followers: 0, likes: 0 } };
+  closeSound();
+  openCreator(o);
 };
-async function sendVideoReply(r, file) {
-  if (!file || !r) return;
-  if (file.size > 60 * 1024 * 1024) return toast("That video is too big. Keep it under 60 MB.");
-  toast("Posting video reply...");
-  const ext = (file.name && file.name.split(".").pop().toLowerCase().replace(/[^a-z0-9]/g, "")) || (file.type.indexOf("mp4") > -1 ? "mp4" : "webm");
-  const path = meId() + "/reply-" + Date.now() + "." + ext;
-  const up = await sb.storage.from("videos").upload(path, file, { contentType: file.type || "video/mp4" });
-  if (up.error) return toast("Couldn't upload that video.");
-  const url = sb.storage.from("videos").getPublicUrl(path).data.publicUrl;
-  const ins = await sb.from("post_comments").insert({ post_id: comId, body: "", parent_id: r.parent, video_url: url });
-  if (ins.error) {
-    sb.storage.from("videos").remove([path]);
-    return toast(/video_url|schema cache/i.test(ins.error.message || "") ? "Run mixo_update.sql in Supabase first." : /only the poster/i.test(ins.error.message || "") ? "Only the person who posted can reply with video." : socialErr(ins.error));
-  }
-  const p = postCache.get(String(comId));
-  const c = await sb.from("post_comments").select("id", { count: "exact", head: true }).eq("post_id", comId);
-  if (p && !c.error && typeof c.count === "number") { p.comments = c.count; paintPost(comId); }
-  toast("Video reply posted");
-  loadComments();
-}
+$("#spUse").onclick = () => {
+  if (!spRoot) return;
+  pendingSound = { id: spRoot.id, url: spRoot.url, user: spRoot.user };
+  spPlay(false);
+  spEl.classList.add("hidden");
+  openCamera();
+  paintSoundChips();
+};
 
-
-// ============ OTHER PEOPLE'S PROFILES: banner + posts ============
-let cUid = "", cTab = 0;
-async function loadCreatorProfile(uid) {
-  const cols = "username,display_name,avatar_url,bio,country";
-  let r = await sb.from("profiles").select(cols + ",banner_url").eq("id", uid).maybeSingle();
-  if (r.error) r = await sb.from("profiles").select(cols).eq("id", uid).maybeSingle();
-  if (r.error || !r.data || cUid !== uid) return;
-  const p = r.data;
-  if (p.banner_url) { $("#cBannerImg").src = p.banner_url; $("#cBannerImg").classList.remove("hidden"); $("#cBanner").classList.add("custom"); }
-  if (p.display_name || p.username) $("#cName").textContent = p.display_name || p.username;
-  if (p.username) $("#cUser").textContent = "@" + p.username;
-  setAv($("#cAvatar"), p.avatar_url, p.username);
-  $("#cBio").textContent = p.bio || "";
-  setLoc($("#cCountry"), p.country, "Not set");
+// play one video from the sound page
+const vv = $("#vidView"), vvVid = $("#vvVid");
+function openVideoView(id) {
+  const p = spPosts.get(String(id));
+  if (!p) return;
+  spPlay(false);
+  const borrowed = !p.isRoot && p.sound_id && spRoot;
+  vv.classList.remove("hidden");
+  vvVid.src = p.media_url;
+  vvVid.muted = !!borrowed;
+  let last = 0;
+  vvVid.ontimeupdate = () => { if (borrowed && vvVid.currentTime + 0.4 < last) { try { SND.currentTime = 0; } catch (err) {} } last = vvVid.currentTime; };
+  vvVid.play().catch(() => { vvVid.muted = true; vvVid.play().catch(() => {}); });
+  if (borrowed) { setSnd(spRoot.url); try { SND.currentTime = 0; } catch (err) {} SND.muted = false; SND.playbackRate = 1; SND.play().catch(() => {}); }
 }
-async function loadCreatorPosts() {
-  const g = $("#cGrid"), tab = cTab, uid = cUid;
-  if (!uid || !sb) { g.innerHTML = ""; return; }
-  const type = P_TYPES[tab];
-  g.innerHTML = '<div class="pempty">Loading...</div>';
-  let list = [];
-  try { list = await queryPosts((q) => q.eq("user_id", uid).eq("type", type).order("created_at", { ascending: false })); }
-  catch (err) { if (tab === cTab && uid === cUid) g.innerHTML = `<div class="pempty">${esc(socialErr(err))}</div>`; return; }
-  if (tab !== cTab || uid !== cUid) return;
-  if (!list.length) { g.innerHTML = `<div class="pempty">No ${{ video: "videos", topic: "topics", photo: "photos" }[type]} yet.</div>`; return; }
-  g.innerHTML = type === "video"
-    ? '<div class="pgrid">' + list.map(videoTile).join("") + "</div>"
-    : '<div class="pcl pcl-p">' + list.map(postCard).join("") + "</div>";
+function closeVideoView() {
+  if (vv.classList.contains("hidden")) return;
+  vvVid.pause(); vvVid.removeAttribute("src"); vvVid.load();
+  SND.pause();
+  vv.classList.add("hidden");
 }
-$$("#cTabs button").forEach((b, i) => b.addEventListener("click", () => {
-  cTab = i;
-  $$("#cTabs button").forEach((x, n) => x.classList.toggle("on", n === i));
-  loadCreatorPosts();
-}));
-function openVideo(url) {
-  const v = $("#lbVid");
-  $("#lbImg").classList.add("hidden");
-  v.classList.remove("hidden");
-  v.src = url;
-  $("#lightbox").classList.remove("hidden");
-  v.play().catch(() => {});
-}
-$("#cGrid").addEventListener("click", (e) => {
-  if (e.target.closest(".pc")) return cardTap(e);
-  const t = e.target.closest(".pt");
-  if (!t) return;
-  const p = postCache.get(String(t.dataset.id));
-  if (p) openVideo(p.img);
-});
+$("#vvClose").onclick = (e) => { e.stopPropagation(); closeVideoView(); };
+vv.onclick = () => { if (vvVid.paused) { vvVid.play().catch(() => {}); if (vvVid.muted && SND.src && SND.paused) SND.play().catch(() => {}); } else { vvVid.pause(); SND.pause(); } };
+$("#spGrid").addEventListener("click", (e) => { const t = e.target.closest(".sp-tile"); if (t) openVideoView(t.dataset.id); });
