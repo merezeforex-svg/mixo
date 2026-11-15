@@ -828,6 +828,14 @@ function openCreator(v) {
   paintFollow(v.uid || "");
   go("creator");
   if (v.uid) refreshCreatorStats(v.uid);
+  cUid = v.uid || ""; cTab = 0;
+  $$("#cTabs button").forEach((x, n) => x.classList.toggle("on", n === 0));
+  $("#cPrev").classList.toggle("hidden", !!v.uid);
+  $("#cTabs").classList.toggle("hidden", !v.uid);
+  $("#cBanner").classList.remove("custom");
+  $("#cBannerImg").classList.add("hidden");
+  $("#cGrid").innerHTML = "";
+  if (v.uid && sb) { loadCreatorProfile(v.uid); loadCreatorPosts(); }
 }
 $("#backBtn").onclick = () => go(state.prev || "home");
 $("#cFollow").onclick = (e) => toggleFollow(e.currentTarget.dataset.uid, $("#cUser").textContent.replace("@", ""));
@@ -876,7 +884,6 @@ function clipHTML(v) {
       </div>
       <button data-act="like" class="${liked ? "on" : ""}">${icon("heart")}<span class="n">${fmt(MIXO.user ? v.likes : v.likes + (liked ? 1 : 0))}</span></button>
       <button data-act="comment">${icon("comment")}<span>${fmt(v.comments)}</span></button>
-      <div class="vws">${icon("feet")}<span class="vwn">${fmt(v.views || 0)}</span></div>
       <button data-act="save" class="${social.saves.has(String(v.id)) ? "on" : ""}">${icon("save")}<span>Save</span></button>
       <button data-act="share">${icon("share")}<span>Share</span></button>
       ${type === "video" ? `<div class="disc" data-act="sound">${icon("music")}</div>` : ""}
@@ -1248,7 +1255,6 @@ function postCard(p) {
         <button data-pa="like" class="${social.likes.has(k) ? "on" : ""}">${icon("heart")}<span>${p.likes ? fmt(p.likes) : ""}</span></button>
         <button data-pa="save" class="${social.saves.has(k) ? "on" : ""}">${icon("save")}</button>
         <button data-pa="share">${icon("share")}</button>
-        <span class="pc-v">${icon("feet")}<span class="vwn">${fmt(p.views || 0)}</span></span>
       </div>
     </div>
   </article>`;
@@ -1535,7 +1541,7 @@ $("#exGrid").addEventListener("click", cardTap);
 // ---------- profile: Videos / Topics / Photos / Saved ----------
 let pTab = 0, sTab = 0;
 const P_TYPES = ["video", "topic", "photo"];
-const videoTile = (p) => `<div class="pt" data-id="${esc(p.id)}" data-type="video"><video src="${esc(p.img)}#t=0.1" muted playsinline preload="metadata"></video><span class="pt-v">${icon("feet")}<span class="vwn">${fmt(p.views || 0)}</span></span>${MIXO.user && p.uid === MIXO.user.id ? `<button class="pt-more" data-pt="more" aria-label="Delete or more">${icon("more")}</button>` : ""}</div>`;
+const videoTile = (p) => `<div class="pt" data-id="${esc(p.id)}" data-type="video"><video src="${esc(p.img)}#t=0.1" muted playsinline preload="metadata"></video><span class="pt-v">${icon("play")}<span class="vwn">${fmt(p.views || 0)}</span></span>${MIXO.user && p.uid === MIXO.user.id ? `<button class="pt-more" data-pt="more" aria-label="Delete or more">${icon("more")}</button>` : ""}</div>`;
 async function loadMyPosts() {
   const g = $("#pGrid");
   if (!g) return;
@@ -1793,7 +1799,7 @@ function renderChat(stick) {
     }
   });
   body.innerHTML = html;
-  $("#chat").classList.toggle("empty", !chat.msgs.length);
+  $("#chat").classList.toggle("ch-empty", !chat.msgs.length);
   if (stick || near) body.scrollTop = body.scrollHeight;
   if (vAud) { const b = $(`.vplay[data-src="${CSS.escape(vSrc)}"]`); if (b) b.classList.toggle("on", !vAud.paused); }
   const incoming = !!(chat.conv && isReq(chat.conv));
@@ -1933,9 +1939,13 @@ chatBody.addEventListener("click", (e) => {
   const chip = e.target.closest(".rxc");
   if (chip) return reactTo(chip.closest(".bw").dataset.m, chip.dataset.e);
   const img = e.target.closest("img[data-full]");
-  if (img) { $("#lbImg").src = img.src; $("#lightbox").classList.remove("hidden"); }
+  if (img) { $("#lbVid").classList.add("hidden"); $("#lbImg").classList.remove("hidden"); $("#lbImg").src = img.src; $("#lightbox").classList.remove("hidden"); }
 });
-$("#lightbox").onclick = () => $("#lightbox").classList.add("hidden");
+$("#lightbox").onclick = (e) => {
+  if (e.target.id === "lbVid") return;
+  const v = $("#lbVid"); v.pause(); v.removeAttribute("src");
+  $("#lightbox").classList.add("hidden");
+};
 $("#reactBar").addEventListener("click", (e) => {
   const b = e.target.closest("button");
   if (!b) return;
@@ -2280,3 +2290,54 @@ async function sendVideoReply(r, file) {
   toast("Video reply posted");
   loadComments();
 }
+
+
+// ============ OTHER PEOPLE'S PROFILES: banner + posts ============
+let cUid = "", cTab = 0;
+async function loadCreatorProfile(uid) {
+  const cols = "username,display_name,avatar_url,bio,country";
+  let r = await sb.from("profiles").select(cols + ",banner_url").eq("id", uid).maybeSingle();
+  if (r.error) r = await sb.from("profiles").select(cols).eq("id", uid).maybeSingle();
+  if (r.error || !r.data || cUid !== uid) return;
+  const p = r.data;
+  if (p.banner_url) { $("#cBannerImg").src = p.banner_url; $("#cBannerImg").classList.remove("hidden"); $("#cBanner").classList.add("custom"); }
+  if (p.display_name || p.username) $("#cName").textContent = p.display_name || p.username;
+  if (p.username) $("#cUser").textContent = "@" + p.username;
+  setAv($("#cAvatar"), p.avatar_url, p.username);
+  $("#cBio").textContent = p.bio || "";
+  setLoc($("#cCountry"), p.country, "Not set");
+}
+async function loadCreatorPosts() {
+  const g = $("#cGrid"), tab = cTab, uid = cUid;
+  if (!uid || !sb) { g.innerHTML = ""; return; }
+  const type = P_TYPES[tab];
+  g.innerHTML = '<div class="pempty">Loading...</div>';
+  let list = [];
+  try { list = await queryPosts((q) => q.eq("user_id", uid).eq("type", type).order("created_at", { ascending: false })); }
+  catch (err) { if (tab === cTab && uid === cUid) g.innerHTML = `<div class="pempty">${esc(socialErr(err))}</div>`; return; }
+  if (tab !== cTab || uid !== cUid) return;
+  if (!list.length) { g.innerHTML = `<div class="pempty">No ${{ video: "videos", topic: "topics", photo: "photos" }[type]} yet.</div>`; return; }
+  g.innerHTML = type === "video"
+    ? '<div class="pgrid">' + list.map(videoTile).join("") + "</div>"
+    : '<div class="pcl pcl-p">' + list.map(postCard).join("") + "</div>";
+}
+$$("#cTabs button").forEach((b, i) => b.addEventListener("click", () => {
+  cTab = i;
+  $$("#cTabs button").forEach((x, n) => x.classList.toggle("on", n === i));
+  loadCreatorPosts();
+}));
+function openVideo(url) {
+  const v = $("#lbVid");
+  $("#lbImg").classList.add("hidden");
+  v.classList.remove("hidden");
+  v.src = url;
+  $("#lightbox").classList.remove("hidden");
+  v.play().catch(() => {});
+}
+$("#cGrid").addEventListener("click", (e) => {
+  if (e.target.closest(".pc")) return cardTap(e);
+  const t = e.target.closest(".pt");
+  if (!t) return;
+  const p = postCache.get(String(t.dataset.id));
+  if (p) openVideo(p.img);
+});

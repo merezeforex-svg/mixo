@@ -5,13 +5,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#06123a">
 <title>MIXO</title>
-<link rel="stylesheet" href="style.css?v=21">
+<link rel="stylesheet" href="style.css?v=22">
 </head>
 <body>
 
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
 <defs>
-<linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#19d3ff"/><stop offset="1" stop-color="#1f5bff"/></linearGradient>
+<linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#9a7bff"/><stop offset="1" stop-color="#2a5bff"/></linearGradient>
 <linearGradient id="hg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8ff4ff"/><stop offset=".55" stop-color="#2f8bff"/><stop offset="1" stop-color="#1237d6"/></linearGradient>
 <radialGradient id="eg" cx=".35" cy=".3" r=".85"><stop offset="0" stop-color="#8ff4ff"/><stop offset=".5" stop-color="#2f8bff"/><stop offset="1" stop-color="#0b2a9a"/></radialGradient>
 <linearGradient id="cbg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#4aa8ff"/><stop offset=".55" stop-color="#2a4dff"/><stop offset="1" stop-color="#5a2bd8"/></linearGradient>
@@ -192,8 +192,9 @@
     </section>
 
     <section id="creator" class="page ppage">
-      <div class="pbanner">
+      <div class="pbanner" id="cBanner">
         <svg class="bart" aria-hidden="true"><use href="#banner-art"/></svg>
+        <img class="bimg hidden" id="cBannerImg" alt="">
         <button class="back" id="backBtn" aria-label="Back"><svg class="ic"><use href="#i-back"/></svg></button>
         <button class="back right" id="cMore" aria-label="More"><svg class="ic moreic"><use href="#i-more"/></svg></button>
       </div>
@@ -213,7 +214,9 @@
         <button class="pbtn main" id="cFollow">Follow</button>
         <button class="pbtn line" id="cMsg"><svg class="ic"><use href="#i-comment"/></svg>Message</button>
       </div>
-      <p class="sub">Preview profile</p>
+      <p class="sub" id="cPrev">Preview profile</p>
+      <div class="ptabs hidden" id="cTabs"><button class="on">Videos</button><button>Topics</button><button>Photos</button></div>
+      <div id="cGrid"></div>
     </section>
   </main>
 
@@ -226,7 +229,7 @@
     <button data-page="profile"><svg class="ic"><use href="#i-user"/></svg><span>Profile</span></button>
   </nav>
 
-  <div id="chat" class="chat hidden empty">
+  <div id="chat" class="chat hidden ch-empty">
     <svg class="ch-art" aria-hidden="true"><use href="#chat-art"/></svg>
     <div class="ch-top">
       <button type="button" id="chatBack" class="ch-back" aria-label="Back"><svg class="ic"><use href="#i-back"/></svg></button>
@@ -250,7 +253,7 @@
 
   <div id="limitModal" class="lim hidden"><div class="lim-card"><p>You can only send up to one message until user accepts</p><button type="button" id="limitOk">CONTINUE</button></div></div>
   <div id="reactBar" class="rbar hidden"></div>
-  <div id="lightbox" class="lbx hidden"><img id="lbImg" alt=""></div>
+  <div id="lightbox" class="lbx hidden"><img id="lbImg" alt=""><video id="lbVid" class="hidden" controls playsinline></video></div>
 
   <div id="sheet" class="sheet hidden">
     <div class="panel">
@@ -474,6 +477,6 @@
 
 <div id="toast"></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
-<script src="app.js?v=19"></script>
+<script src="app.js?v=20"></script>
 </body>
 </html>
