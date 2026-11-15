@@ -463,7 +463,6 @@ $("#camFlash").onclick = async () => {
 $("#camTimer").onclick = () => {
   cam.timer = !cam.timer;
   $("#camTimer").classList.toggle("on", cam.timer);
-  toast(cam.timer ? "3 second timer on" : "Timer off");
 };
 $$("#camModes button").forEach((b) => (b.onclick = () => {
   cam.max = +b.dataset.s;
@@ -737,7 +736,6 @@ async function toggleFollow(uid, uname) {
     paintFollow(uid);
     return toast(socialErr(r.error));
   }
-  toast(on ? "Following @" + uname : "Unfollowed @" + uname);
   refreshMyStats();
   if ($("#cFollow").dataset.uid === uid) refreshCreatorStats(uid);
 }
@@ -948,7 +946,7 @@ document.addEventListener("visibilitychange", () => { if (document.hidden) pause
 function tapVideo(clip) {
   const vid = $("video.vid", clip);
   if (!vid) return;
-  if (vid.muted) { MIXO.sound = true; $$("video.vid").forEach((x) => (x.muted = false)); toast("Sound on"); return; }
+  if (vid.muted) { MIXO.sound = true; $$("video.vid").forEach((x) => (x.muted = false)); return; }
   if (vid.paused) { vid.play().catch(() => {}); clip.classList.remove("paused"); }
   else { vid.pause(); clip.classList.add("paused"); }
 }
@@ -1296,7 +1294,6 @@ async function toggleSave(id) {
   const k = String(id), on = !social.saves.has(k);
   on ? social.saves.add(k) : social.saves.delete(k);
   paintPost(k);
-  toast(on ? "Saved" : "Removed from saved");
   const r = on ? await sb.from("post_saves").insert({ post_id: id })
                : await sb.from("post_saves").delete().eq("post_id", id).eq("user_id", MIXO.user.id);
   if (r.error) { on ? social.saves.delete(k) : social.saves.add(k); paintPost(k); toast(socialErr(r.error)); }
@@ -1490,7 +1487,6 @@ async function deletePost(id) {
   $("#viewSheet").classList.add("hidden");
   videos = videos.filter((v) => String(v.id) !== k);
   if (!$$("#feed .clip").length) $("#feed").innerHTML = emptyFeed("No posts yet.<br>Tap + to post the first one.");
-  toast("Post deleted");
   if ($("#profile").classList.contains("on")) loadMyPosts();
 }
 
@@ -1511,7 +1507,6 @@ async function deleteComment(btn) {
   const p = postCache.get(String(comId));
   const c = await sb.from("post_comments").select("id", { count: "exact", head: true }).eq("post_id", comId);
   if (p && !c.error && typeof c.count === "number") { p.comments = c.count; paintPost(comId); }
-  toast("Comment deleted");
   loadComments();
 }
 
@@ -1599,7 +1594,7 @@ $("#pGrid").addEventListener("click", (e) => {
 });
 
 // ============ INBOX: real messages, instant delivery, message requests ============
-const inbox = { convs: [], profiles: new Map(), unread: new Map(), tab: "msg", loaded: false, error: "" };
+const inbox = { convs: [], profiles: new Map(), unread: new Map(), lastKind: new Map(), tab: "msg", loaded: false, error: "" };
 const chat = { uid: null, conv: null, user: null, msgs: [], open: false, sending: false };
 let rtChannel = null, rtOK = false, inboxTimer = null, pollTimer = null;
 
@@ -1626,15 +1621,18 @@ function setBadge(n) {
 
 async function refreshInbox() {
   if (!sb || !MIXO.user) return renderInbox();
-  const [cr, ur] = await Promise.all([
+  const [cr, ur, lr] = await Promise.all([
     sb.from("conversations").select("*").order("last_message_at", { ascending: false }).limit(100),
     sb.from("messages").select("conversation_id").is("read_at", null).neq("sender_id", meId()).limit(1000),
+    sb.from("messages").select("conversation_id,kind,created_at").in("kind", ["image", "voice"]).order("created_at", { ascending: false }).limit(300),
   ]);
   if (cr.error) { inbox.error = inboxErr(cr.error); return renderInbox(); }
   inbox.error = "";
   inbox.convs = (cr.data || []).filter((c) => !social.blocked.has(otherOf(c)));
   inbox.unread = new Map();
   (ur.data || []).forEach((r) => inbox.unread.set(r.conversation_id, (inbox.unread.get(r.conversation_id) || 0) + 1));
+  inbox.lastKind = new Map();
+  (lr.data || []).forEach((r) => { if (!inbox.lastKind.has(r.conversation_id)) inbox.lastKind.set(r.conversation_id, r); });
   const need = [...new Set(inbox.convs.map(otherOf))].filter((id) => !inbox.profiles.has(id));
   if (need.length) {
     const pr = await sb.from("profiles").select("id,username,display_name,avatar_url,bio,country").in("id", need);
@@ -1648,6 +1646,16 @@ async function refreshInbox() {
   }
 }
 const refreshInboxSoon = () => { clearTimeout(inboxTimer); inboxTimer = setTimeout(refreshInbox, 300); };
+
+// what the Inbox list shows under a name: the text, 📷 for a photo, 🎙️ for a voice note (no "You:")
+function previewOf(c) {
+  const k = inbox.lastKind.get(c.id);
+  if (k && Math.abs(new Date(k.created_at) - new Date(c.last_message_at)) < 5000) return k.kind === "image" ? "📷" : "🎙️";
+  const t = (c.last_message || "").trim();
+  if (/^(📷|🖼️)?\s*(photo|picture|image)s?$/i.test(t)) return "📷";
+  if (/^(🎙️|🎤)?\s*voice(\s*(note|message))?$/i.test(t)) return "🎙️";
+  return t;
+}
 
 function renderInbox() {
   const reqs = inbox.convs.filter(isReq);
@@ -1667,7 +1675,7 @@ function renderInbox() {
   box.innerHTML = list.map((c) => {
     const p = inbox.profiles.get(otherOf(c)) || {};
     const n = inbox.unread.get(c.id) || 0;
-    const prev = (c.last_sender === meId() ? "You: " : "") + (c.last_message || "");
+    const prev = previewOf(c);
     return `<button type="button" class="irow" data-c="${esc(c.id)}"><div class="iav"></div><div class="itx"><b>${esc(p.display_name || p.username || "User")}</b><span class="${n ? "new" : ""}">${esc(prev)}</span></div><div class="imeta"><small>${ago(c.last_message_at)}</small>${n ? `<i class="bdg">${n}</i>` : ""}</div></button>`;
   }).join("");
   $$("#inList .iav").forEach((el, i) => { const p = inbox.profiles.get(otherOf(list[i])) || {}; setAv(el, p.avatar_url, p.username); });
@@ -1695,7 +1703,7 @@ const syncSend = () => $("#chatSend").classList.toggle("mic", !($("#chatInput").
 const iAmLocked = () => { const c = chat.conv, me = meId(); return !!(c && c.initiator === me && c.status !== "accepted" && chat.msgs.some((m) => m.sender_id === me)); };
 const showLimit = () => $("#limitModal").classList.remove("hidden");
 $("#limitOk").onclick = () => $("#limitModal").classList.add("hidden");
-const paintOnline = () => $("#chatDot").classList.toggle("hidden", !(chat.open && online.has(chat.uid)));
+const paintOnline = () => { const on = !!(chat.open && online.has(chat.uid)); $("#chatDot").classList.toggle("hidden", !on); $("#chatStat").textContent = on ? " · Online" : ""; };
 
 async function signMedia(list) {
   const need = [...new Set(list.filter((m) => m.media_url && !signed.has(m.media_url)).map((m) => m.media_url))];
@@ -1912,11 +1920,26 @@ async function reactTo(mid, emoji) {
   const r = await sb.rpc("react_message", { p_msg: mid, p_emoji: emoji });
   if (r.error) { setReact(mid, me, cur || null); renderChat(); toast(/does not exist|schema cache|could not find/i.test(r.error.message || "") ? "Run mixo_update.sql in Supabase first." : inboxErr(r.error)); }
 }
+async function deleteMsg(mid) {
+  const m = chat.msgs.find((x) => x.id === mid);
+  if (!m || m.sender_id !== meId()) return;
+  if (!(await confirmBox("Delete message?", "It's removed for everyone. They won't be told.", "Delete"))) return;
+  chat.msgs = chat.msgs.filter((x) => x.id !== mid);
+  renderChat();
+  const r = await sb.rpc("delete_message", { p_msg: mid });
+  if (r.error) {
+    chat.msgs.push(m); chat.msgs.sort((a, b) => new Date(a.created_at) - new Date(b.created_at)); renderChat();
+    return toast(/does not exist|schema cache|could not find/i.test(r.error.message || "") ? "Run mixo_delete_message.sql in Supabase first." : inboxErr(r.error));
+  }
+  if (m.media_url) sb.storage.from("chat").remove([m.media_url]);
+  refreshInbox();
+}
 function hideReactBar() { $("#reactBar").classList.add("hidden"); }
 function showReactBar(bw) {
   rxFor = bw.dataset.m;
   const bar = $("#reactBar");
-  bar.innerHTML = REACTS.map((e) => `<button type="button" data-e="${e}">${e}</button>`).join("");
+  bar.innerHTML = REACTS.map((e) => `<button type="button" data-e="${e}">${e}</button>`).join("")
+    + (bw.classList.contains("me") ? `<button type="button" class="rdel" data-del="1" aria-label="Delete for everyone">${icon("trash")}</button>` : "");
   bar.classList.remove("hidden");
   const r = bw.getBoundingClientRect(), w = bar.offsetWidth;
   bar.style.left = Math.min(Math.max(8, r.left + r.width / 2 - w / 2), innerWidth - w - 8) + "px";
@@ -1950,6 +1973,7 @@ $("#reactBar").addEventListener("click", (e) => {
   const b = e.target.closest("button");
   if (!b) return;
   hideReactBar();
+  if (b.dataset.del) return deleteMsg(rxFor);
   reactTo(rxFor, b.dataset.e);
 });
 document.addEventListener("pointerdown", (e) => { if (!e.target.closest("#reactBar")) hideReactBar(); }, true);
@@ -1970,8 +1994,8 @@ async function answerReq(ok) {
   const r = await sb.rpc("respond_request", { p_conv: id, p_accept: ok });
   if (r.error) return toast(inboxErr(r.error));
   await refreshInbox();
-  if (ok) { toast("Request accepted"); loadChatMsgs(); }
-  else { closeChat(); toast("Request rejected"); }
+  if (ok) { loadChatMsgs(); }
+  else { closeChat(); }
 }
 $("#chatAccept").onclick = () => answerReq(true);
 $("#chatReject").onclick = () => answerReq(false);
@@ -1998,6 +2022,12 @@ $("#cMsg").onclick = () => {
 
 // ----- instant delivery (Supabase Realtime), plus the green "online" dot -----
 async function onMsgEvent(p) {
+  if (p.eventType === "DELETE") {   // the other person deleted a message: it just disappears, no notice
+    const id = p.old && p.old.id;
+    if (id && chat.msgs.some((x) => x.id === id)) { chat.msgs = chat.msgs.filter((x) => x.id !== id); renderChat(); }
+    refreshInboxSoon();
+    return;
+  }
   const m = p.new;
   if (!m || !m.id) return;
   if (p.eventType === "UPDATE") {
