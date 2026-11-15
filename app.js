@@ -169,11 +169,12 @@ function enterApp() {
   fillProfile();
   ensureCountry();
   startInbox();
-  loadSocial().finally(() => { renderFeed(); loadMyPosts(); refreshMyStats(); });
+  loadSocial().finally(() => { renderFeed(); loadMyPosts(); refreshMyStats(); openFromHash(); });
 }
 $("#previewBtn").onclick = enterApp;
 
 $("#logoutBtn").onclick = async () => {
+  $("#setSheet").classList.add("hidden");
   if (sb) await sb.auth.signOut();
   pauseAll();
   stopInbox();
@@ -328,7 +329,7 @@ function camFail(msg) { $("#camErrTxt").textContent = msg; $("#camErr").classLis
 async function camStart() {
   camStop();
   const stream = await navigator.mediaDevices.getUserMedia({
-    video: { facingMode: cam.facing, width: { ideal: 1080 }, height: { ideal: 1920 } },
+    video: { facingMode: cam.facing, width: { ideal: 1280 }, height: { ideal: 960 } },
     audio: true
   });
   cam.stream = stream;
@@ -347,8 +348,9 @@ function camStop() {
   cam.stream = null;
   camVid.srcObject = null;
 }
-async function openCamera() {
+async function openCamera(opts) {
   if (!MIXO.user) return toast("Log in with your account to post");
+  cam.reply = (opts && opts.reply) || null;
   pauseAll();
   camEl.classList.remove("hidden");
   camUi("idle");
@@ -445,7 +447,7 @@ $("#camRec").onclick = () => {
 $("#camClose").onclick = camClose;
 $("#camErrClose").onclick = camClose;
 $("#camErrBtn").onclick = () => $("#camNative").click();
-$("#camUp").onclick = () => $("#postFile").click();
+$("#camUp").onclick = () => (cam.reply ? $("#vrFile") : $("#postFile")).click();
 $("#camFlip").onclick = async () => {
   if (cam.busy || (cam.rec && cam.rec.state === "recording")) return;
   cam.facing = cam.facing === "user" ? "environment" : "user";
@@ -470,6 +472,7 @@ $$("#camModes button").forEach((b) => (b.onclick = () => {
 $("#camRetake").onclick = () => { $("#camRevVid").pause(); $("#camReview").classList.add("hidden"); };
 $("#camNext").onclick = () => {
   const f = cam.file;
+  if (cam.reply) { const r = cam.reply; camClose(); return sendVideoReply(r, f); }
   camClose();
   openPost();
   handleVideoFile(f);
@@ -873,6 +876,7 @@ function clipHTML(v) {
       </div>
       <button data-act="like" class="${liked ? "on" : ""}">${icon("heart")}<span class="n">${fmt(MIXO.user ? v.likes : v.likes + (liked ? 1 : 0))}</span></button>
       <button data-act="comment">${icon("comment")}<span>${fmt(v.comments)}</span></button>
+      <div class="vws">${icon("feet")}<span class="vwn">${fmt(v.views || 0)}</span></div>
       <button data-act="save" class="${social.saves.has(String(v.id)) ? "on" : ""}">${icon("save")}<span>Save</span></button>
       <button data-act="share">${icon("share")}<span>Share</span></button>
       ${type === "video" ? `<div class="disc" data-act="sound">${icon("music")}</div>` : ""}
@@ -954,7 +958,7 @@ $("#feed").addEventListener("click", (e) => {
   else if (act === "save") {
     toggleSave(v.id);
   } else if (act === "comment") { if (MIXO.user) openComments(v.id); else toast("Log in to comment"); }
-  else if (act === "share") toast("Sharing comes in Stage 4");
+  else if (act === "share") sharePost(v.id);
   else if (act === "sound") toast("Sound pages come in Stage 4");
   else if (act === "more") postMore(v);
 });
@@ -1183,7 +1187,7 @@ function ago(d) {
   if (s < 604800) return Math.floor(s / 86400) + "d";
   return new Date(d).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
-const socialErr = (err) => /follows/.test(err.message || "") ? "Run mixo_follows.sql in Supabase first." : /parent_id|image_url/.test(err.message || "") ? "Run mixo_comments.sql in Supabase first."
+const socialErr = (err) => /follows/.test(err.message || "") ? "Run mixo_follows.sql in Supabase first." : /parent_id|image_url|video_url|only the poster/.test(err.message || "") ? "Run mixo_comments.sql in Supabase first."
   : /post_(likes|saves|comments)/.test(err.message || "") ? "Run mixo_social.sql in Supabase first." : niceError(err.message);
 
 async function loadSocial() {
@@ -1205,21 +1209,25 @@ function normPost(r) {
   const p = (Array.isArray(r.profiles) ? r.profiles[0] : r.profiles) || {};
   const o = { id: r.id, uid: r.user_id, type: r.type, text: r.caption || "", img: r.media_url, time: r.created_at,
     user: p.username || "user", name: p.display_name || p.username || "User", avatar: p.avatar_url,
-    bio: p.bio || "", country: p.country || "", likes: cnt(r.post_likes), comments: cnt(r.post_comments),
+    bio: p.bio || "", country: p.country || "", likes: cnt(r.post_likes), comments: cnt(r.post_comments), views: Number(r.views) || 0,
     profile: { following: 0, followers: 0, likes: 0 } };
   postCache.set(String(r.id), o);
   return o;
 }
 const POST_COLS = "id,user_id,type,caption,media_url,created_at,profiles!user_id(username,display_name,avatar_url,bio,country)";
 async function fetchPosts(types) {
-  let r = await sb.from("posts").select(POST_COLS + ",post_likes(count),post_comments(count)").in("type", types).order("created_at", { ascending: false }).limit(60);
-  if (r.error) r = await sb.from("posts").select(POST_COLS).in("type", types).order("created_at", { ascending: false }).limit(60);
+  const q = (cols) => sb.from("posts").select(cols).in("type", types).order("created_at", { ascending: false }).limit(60);
+  let r = await q(POST_COLS + ",views,post_likes(count),post_comments(count)");
+  if (r.error) r = await q(POST_COLS + ",post_likes(count),post_comments(count)");
+  if (r.error) r = await q(POST_COLS);
   if (r.error) throw r.error;
   return r.data.map(normPost).filter((p) => !social.blocked.has(p.uid));
 }
 async function fetchOne(id) {
-  let r = await sb.from("posts").select(POST_COLS + ",post_likes(count),post_comments(count)").eq("id", id).maybeSingle();
-  if (r.error) r = await sb.from("posts").select(POST_COLS).eq("id", id).maybeSingle();
+  const q = (cols) => sb.from("posts").select(cols).eq("id", id).maybeSingle();
+  let r = await q(POST_COLS + ",views,post_likes(count),post_comments(count)");
+  if (r.error) r = await q(POST_COLS + ",post_likes(count),post_comments(count)");
+  if (r.error) r = await q(POST_COLS);
   if (r.error || !r.data) throw r.error || new Error("Post not found");
   return normPost(r.data);
 }
@@ -1239,6 +1247,8 @@ function postCard(p) {
         <button data-pa="comment">${icon("comment")}<span>${p.comments ? fmt(p.comments) : ""}</span></button>
         <button data-pa="like" class="${social.likes.has(k) ? "on" : ""}">${icon("heart")}<span>${p.likes ? fmt(p.likes) : ""}</span></button>
         <button data-pa="save" class="${social.saves.has(k) ? "on" : ""}">${icon("save")}</button>
+        <button data-pa="share">${icon("share")}</button>
+        <span class="pc-v">${icon("feet")}<span class="vwn">${fmt(p.views || 0)}</span></span>
       </div>
     </div>
   </article>`;
@@ -1304,7 +1314,8 @@ function compressImage(file, max, q = 0.85) {
 }
 async function queryPosts(mod) {
   const run = (cols) => mod(sb.from("posts").select(cols));
-  let r = await run(POST_COLS + ",post_likes(count),post_comments(count)");
+  let r = await run(POST_COLS + ",views,post_likes(count),post_comments(count)");
+  if (r.error) r = await run(POST_COLS + ",post_likes(count),post_comments(count)");
   if (r.error) r = await run(POST_COLS);
   if (r.error) throw r.error;
   return r.data.map(normPost).filter((p) => !social.blocked.has(p.uid));
@@ -1331,8 +1342,10 @@ function setReply(id, user) {
 }
 async function loadComments() {
   comList.innerHTML = '<p class="cmt-empty">Loading...</p>';
-  let r = await sb.from("post_comments").select(COM_BASE + ",image_url,parent_id").eq("post_id", comId).order("created_at", { ascending: true });
-  if (r.error) r = await sb.from("post_comments").select(COM_BASE).eq("post_id", comId).order("created_at", { ascending: true });
+  const q = (cols) => sb.from("post_comments").select(cols).eq("post_id", comId).order("created_at", { ascending: true });
+  let r = await q(COM_BASE + ",image_url,parent_id,video_url");
+  if (r.error) r = await q(COM_BASE + ",image_url,parent_id");
+  if (r.error) r = await q(COM_BASE);
   if (r.error) { comList.innerHTML = `<p class="cmt-empty">${esc(socialErr(r.error))}</p>`; return; }
   r.data = r.data.filter((c) => !social.blocked.has(c.user_id));
   if (!r.data.length) { comList.innerHTML = '<p class="cmt-empty">No comments yet. Be the first.</p>'; return; }
@@ -1343,7 +1356,7 @@ async function loadComments() {
     const p = (Array.isArray(c.profiles) ? c.profiles[0] : c.profiles) || {};
     const u = p.username || "user";
     const av = p.avatar_url ? `<img src="${esc(p.avatar_url)}" alt="">` : esc(u[0].toUpperCase());
-    return `<div class="cmt"><div class="pc-av sm">${av}</div><div class="cb"><b>@${esc(u)}</b><span>${ago(c.created_at)}</span>${c.body ? `<p>${esc(c.body)}</p>` : ""}${c.image_url ? `<img class="cmt-img" src="${esc(c.image_url)}" alt="" loading="lazy">` : ""}<button type="button" class="cmt-rep" data-top="${esc(topId)}" data-user="${esc(u)}">Reply</button>${(c.user_id === me || owner === me) ? `<button type="button" class="cmt-del" data-cid="${esc(c.id)}" data-own="${c.user_id === me ? 1 : 0}" data-img="${esc(c.image_url || "")}" aria-label="Delete comment">${icon("trash")}</button>` : ""}</div></div>`;
+    return `<div class="cmt"><div class="pc-av sm">${av}</div><div class="cb"><b>@${esc(u)}</b><span>${ago(c.created_at)}</span>${c.body ? `<p>${esc(c.body)}</p>` : ""}${c.image_url ? `<img class="cmt-img" src="${esc(c.image_url)}" alt="" loading="lazy">` : ""}${c.video_url ? `<video class="cmt-vid" src="${esc(c.video_url)}" controls playsinline preload="metadata"></video>` : ""}<button type="button" class="cmt-rep" data-top="${esc(topId)}" data-user="${esc(u)}">Reply</button>${(owner === me && c.user_id !== me) ? `<button type="button" class="cmt-vrep" data-top="${esc(topId)}" data-user="${esc(u)}">Reply with video</button>` : ""}${(c.user_id === me || owner === me) ? `<button type="button" class="cmt-del" data-cid="${esc(c.id)}" data-own="${c.user_id === me ? 1 : 0}" data-img="${esc(c.image_url || "")}" data-vid="${esc(c.video_url || "")}" aria-label="Delete comment">${icon("trash")}</button>` : ""}</div></div>`;
   };
   comList.innerHTML = r.data.filter((c) => !c.parent_id).map((c) =>
     one(c, c.id) + (kids[c.id] ? `<div class="cmt-kids">${kids[c.id].map((k) => one(k, c.id)).join("")}</div>` : "")).join("");
@@ -1361,6 +1374,8 @@ comSheet.onclick = (e) => { if (e.target.id === "comSheet") comSheet.classList.a
 comList.addEventListener("click", (e) => {
   const d = e.target.closest(".cmt-del");
   if (d) return deleteComment(d);
+  const v = e.target.closest(".cmt-vrep");
+  if (v) return openCamera({ reply: { parent: v.dataset.top, user: v.dataset.user } });
   const b = e.target.closest(".cmt-rep");
   if (b) setReply(b.dataset.top, b.dataset.user);
 });
@@ -1413,6 +1428,7 @@ function cardTap(e) {
   if (a === "like") toggleLike(id);
   else if (a === "save") toggleSave(id);
   else if (a === "comment") openComments(id);
+  else if (a === "share") sharePost(id);
   else if (a === "more") postMore(postCache.get(id) || { id });
   else if (a === "profile") { const p = postCache.get(id); if (p && !(MIXO.user && p.uid === MIXO.user.id)) { $("#viewSheet").classList.add("hidden"); openCreator(p); } }
 }
@@ -1482,6 +1498,10 @@ async function deleteComment(btn) {
     const path = storagePath(btn.dataset.img, "avatars");
     if (path) sb.storage.from("avatars").remove([path]);
   }
+  if (btn.dataset.own === "1" && btn.dataset.vid) {
+    const vp = storagePath(btn.dataset.vid, "videos");
+    if (vp) sb.storage.from("videos").remove([vp]);
+  }
   const p = postCache.get(String(comId));
   const c = await sb.from("post_comments").select("id", { count: "exact", head: true }).eq("post_id", comId);
   if (p && !c.error && typeof c.count === "number") { p.comments = c.count; paintPost(comId); }
@@ -1515,7 +1535,7 @@ $("#exGrid").addEventListener("click", cardTap);
 // ---------- profile: Videos / Topics / Photos / Saved ----------
 let pTab = 0, sTab = 0;
 const P_TYPES = ["video", "topic", "photo"];
-const videoTile = (p) => `<div class="pt" data-id="${esc(p.id)}" data-type="video"><video src="${esc(p.img)}#t=0.1" muted playsinline preload="metadata"></video>${MIXO.user && p.uid === MIXO.user.id ? `<button class="pt-more" data-pt="more" aria-label="Delete or more">${icon("more")}</button>` : ""}</div>`;
+const videoTile = (p) => `<div class="pt" data-id="${esc(p.id)}" data-type="video"><video src="${esc(p.img)}#t=0.1" muted playsinline preload="metadata"></video><span class="pt-v">${icon("feet")}<span class="vwn">${fmt(p.views || 0)}</span></span>${MIXO.user && p.uid === MIXO.user.id ? `<button class="pt-more" data-pt="more" aria-label="Delete or more">${icon("more")}</button>` : ""}</div>`;
 async function loadMyPosts() {
   const g = $("#pGrid");
   if (!g) return;
@@ -1656,6 +1676,40 @@ $("#inList").addEventListener("click", (e) => {
 });
 
 // ----- chat screen -----
+const CALLS_READY = false;
+const REACTS = ["❤️", "😂", "😮", "😢", "🔥", "👍"];
+const signed = new Map();
+const vr = { rec: null, chunks: [], stream: null, t0: 0, tick: 0, send: false };
+let online = new Set(), presCh = null, vAud = null, vSrc = "", lpTimer = 0, rxFor = null;
+chat.reacts = new Map();
+
+const fmtDur = (s) => Math.floor(s / 60) + ":" + String(Math.round(s % 60)).padStart(2, "0");
+const autoGrow = () => { const t = $("#chatInput"); t.style.height = "46px"; t.style.height = Math.min(Math.max(t.scrollHeight, 46), 120) + "px"; };
+const syncSend = () => $("#chatSend").classList.toggle("mic", !($("#chatInput").value.trim() || vr.rec));
+const iAmLocked = () => { const c = chat.conv, me = meId(); return !!(c && c.initiator === me && c.status !== "accepted" && chat.msgs.some((m) => m.sender_id === me)); };
+const showLimit = () => $("#limitModal").classList.remove("hidden");
+$("#limitOk").onclick = () => $("#limitModal").classList.add("hidden");
+const paintOnline = () => $("#chatDot").classList.toggle("hidden", !(chat.open && online.has(chat.uid)));
+
+async function signMedia(list) {
+  const need = [...new Set(list.filter((m) => m.media_url && !signed.has(m.media_url)).map((m) => m.media_url))];
+  if (!need.length) return;
+  const r = await sb.storage.from("chat").createSignedUrls(need, 3600);
+  (r.data || []).forEach((x) => { if (x.signedUrl) signed.set(x.path, x.signedUrl); });
+}
+async function loadReacts() {
+  const ids = chat.msgs.map((m) => m.id);
+  chat.reacts = new Map();
+  if (!ids.length) return;
+  const r = await sb.from("message_reactions").select("message_id,user_id,emoji").in("message_id", ids);
+  (r.data || []).forEach((x) => setReact(x.message_id, x.user_id, x.emoji));
+}
+function setReact(mid, uid, emoji) {
+  const list = (chat.reacts.get(mid) || []).filter((r) => r.user_id !== uid);
+  if (emoji) list.push({ user_id: uid, emoji });
+  chat.reacts.set(mid, list);
+}
+
 async function openChat(user) {
   if (!sb || !MIXO.user) return toast("Log in with a real account to send messages.");
   if (!user || user.id === meId()) return;
@@ -1665,21 +1719,26 @@ async function openChat(user) {
   chat.user = inbox.profiles.get(user.id);
   chat.conv = inbox.convs.find((c) => otherOf(c) === user.id) || null;
   chat.msgs = [];
+  chat.reacts = new Map();
   chat.open = true;
   $("#chatName").textContent = chat.user.display_name || chat.user.username || "User";
   $("#chatUser").textContent = "@" + (chat.user.username || "user");
   setAv($("#chatAv"), chat.user.avatar_url, chat.user.username);
   $("#chatInput").value = "";
-  autoGrow();
-  $("#chat").classList.remove("hidden");
+  autoGrow(); syncSend(); paintOnline();
+  $("#chat").classList.remove("hidden", "recording");
   renderChat(true);
   fitChat();
   await loadChatMsgs();
 }
 function closeChat() {
+  if (vr.rec) voiceStop(false);
+  if (vAud) { vAud.pause(); vAud = null; vSrc = ""; }
   chat.open = false; chat.uid = null; chat.conv = null; chat.msgs = [];
   $("#chat").classList.add("hidden");
   $("#chatInput").blur();
+  $("#reactBar").classList.add("hidden");
+  paintOnline();
   refreshInboxSoon();
 }
 async function loadChatMsgs() {
@@ -1689,6 +1748,9 @@ async function loadChatMsgs() {
   if (!chat.open || !chat.conv || chat.conv.id !== id) return;
   if (r.error) return toast(inboxErr(r.error));
   chat.msgs = (r.data || []).reverse();
+  await signMedia(chat.msgs);
+  await loadReacts();
+  if (!chat.open || !chat.conv || chat.conv.id !== id) return;
   renderChat(true);
   markRead();
 }
@@ -1706,6 +1768,17 @@ async function markRead() {
   await sb.rpc("mark_read", { p_conv: chat.conv.id });
 }
 
+function bubbleHTML(m) {
+  const mine = m.sender_id === meId();
+  let inner;
+  if (m.kind === "image") inner = `<img src="${esc(signed.get(m.media_url) || "")}" alt="" data-full>`;
+  else if (m.kind === "voice") inner = `<button type="button" class="vplay" data-src="${esc(signed.get(m.media_url) || "")}" aria-label="Play">${icon("play").replace('class="ic"', 'class="ic pl"')}${icon("pause").replace('class="ic"', 'class="ic pa"')}</button><div class="vbar"><i></i></div><span class="vdur">${fmtDur(m.media_secs || 0)}</span>`;
+  else inner = esc(m.body);
+  const groups = {};
+  (chat.reacts.get(m.id) || []).forEach((r) => (groups[r.emoji] = groups[r.emoji] || []).push(r.user_id));
+  const chips = Object.keys(groups).map((e) => `<button type="button" class="rxc ${groups[e].includes(meId()) ? "mine" : ""}" data-e="${esc(e)}">${e}${groups[e].length > 1 ? " " + groups[e].length : ""}</button>`).join("");
+  return `<div class="bw ${mine ? "me" : "them"}" data-m="${esc(m.id)}"><div class="bub ${m.kind || "text"}">${inner}</div>${chips ? `<div class="rx">${chips}</div>` : ""}</div>`;
+}
 function renderChat(stick) {
   const body = $("#chatBody");
   const near = body.scrollHeight - body.scrollTop - body.clientHeight < 90;
@@ -1714,42 +1787,166 @@ function renderChat(stick) {
   let html = "";
   chat.msgs.forEach((m, i) => {
     const mine = m.sender_id === me, next = chat.msgs[i + 1];
-    html += `<div class="bub ${mine ? "me" : "them"}">${esc(m.body)}</div>`;
+    html += bubbleHTML(m);
     if (!next || next.sender_id !== m.sender_id || new Date(next.created_at) - new Date(m.created_at) > 300000) {
       html += `<div class="bmeta ${mine ? "me" : "them"}">${mine && !next && m.read_at ? "Seen" : t(m.created_at)}</div>`;
     }
   });
-  if (!chat.msgs.length) {
-    const c = chat.conv, who = esc((chat.user && chat.user.username) || "them");
-    html = `<p class="hint c">${c && isReq(c) ? "Loading..." : `Say hello to @${who}.<br>If they don't follow you, it goes to their message requests.`}</p>`;
-  }
   body.innerHTML = html;
+  $("#chat").classList.toggle("empty", !chat.msgs.length);
   if (stick || near) body.scrollTop = body.scrollHeight;
-
-  const c = chat.conv;
-  const incoming = !!(c && isReq(c));
-  const locked = !!(c && c.initiator === me && c.status !== "accepted" && chat.msgs.some((m) => m.sender_id === me));
+  if (vAud) { const b = $(`.vplay[data-src="${CSS.escape(vSrc)}"]`); if (b) b.classList.toggle("on", !vAud.paused); }
+  const incoming = !!(chat.conv && isReq(chat.conv));
   $("#chatReq").classList.toggle("hidden", !incoming);
-  $("#chatLock").classList.toggle("hidden", !locked);
-  $("#chatForm").classList.toggle("hidden", incoming || locked);
+  $("#chatForm").classList.toggle("hidden", incoming);
 }
 
+// ----- sending: text, photos, voice notes -----
+async function afterSend(data) {
+  await signMedia([data]);
+  if (!chat.open) return;
+  addMsg(data);
+  await refreshInbox();
+  if (chat.open) { chat.conv = inbox.convs.find((c) => c.id === data.conversation_id) || chat.conv; renderChat(true); }
+}
 $("#chatForm").addEventListener("submit", async (e) => {
   e.preventDefault();
+  if (vr.rec) return voiceStop(true);
   const inp = $("#chatInput"), text = inp.value.trim();
-  if (!text || chat.sending || !chat.uid) return;
-  chat.sending = true; inp.value = ""; autoGrow();
-  const { data, error } = await sb.rpc("send_message", { p_to: chat.uid, p_body: text });
+  if (!text) return voiceStart();
+  if (chat.sending || !chat.uid) return;
+  if (iAmLocked()) return showLimit();
+  chat.sending = true; inp.value = ""; autoGrow(); syncSend();
+  const { data, error } = await sb.rpc("send_message", { p_to: chat.uid, p_body: text, p_kind: "text" });
   chat.sending = false;
-  if (error) { inp.value = text; autoGrow(); return toast(inboxErr(error)); }
-  if (chat.open) {
-    addMsg(data);
-    await refreshInbox();
-    if (chat.open) { chat.conv = inbox.convs.find((c) => c.id === data.conversation_id) || chat.conv; renderChat(true); }
-  }
+  if (error) { inp.value = text; autoGrow(); syncSend(); return /request pending/i.test(error.message || "") ? showLimit() : toast(inboxErr(error)); }
+  await afterSend(data);
 });
 $("#chatSend").addEventListener("pointerdown", (e) => e.preventDefault()); // keeps the keyboard open
+$("#chatInput").addEventListener("input", () => { autoGrow(); syncSend(); });
+
+async function sendMedia(kind, blob, ext, type, secs) {
+  if (chat.sending || !chat.uid) return;
+  chat.sending = true;
+  try {
+    const path = meId() + "/" + (kind === "image" ? "img-" : "voice-") + Date.now() + "." + ext;
+    const up = await sb.storage.from("chat").upload(path, blob, { contentType: type });
+    if (up.error) throw up.error;
+    const { data, error } = await sb.rpc("send_message", { p_to: chat.uid, p_body: "", p_kind: kind, p_media: path, p_secs: secs });
+    if (error) { sb.storage.from("chat").remove([path]); throw error; }
+    await afterSend(data);
+  } catch (err) {
+    const m = (err && err.message) || "";
+    if (/request pending/i.test(m)) showLimit();
+    else toast(/bucket not found/i.test(m) ? "Run mixo_update.sql in Supabase first." : inboxErr(err));
+  } finally { chat.sending = false; }
+}
+$("#chatPlus").onclick = () => { if (iAmLocked()) return showLimit(); $("#chatImg").click(); };
+$("#chatImg").onchange = async (e) => {
+  const f = e.target.files[0];
+  e.target.value = "";
+  if (!f || !chat.uid) return;
+  if (iAmLocked()) return showLimit();
+  try { await sendMedia("image", await compressImage(f, 1280, 0.8), "jpg", "image/jpeg", null); }
+  catch (err) { toast("Couldn't send that photo."); }
+};
+
+async function voiceStart() {
+  if (iAmLocked()) return showLimit();
+  if (!navigator.mediaDevices || !window.MediaRecorder) return toast("Voice notes aren't supported on this browser.");
+  try { vr.stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+  catch (err) { return toast("Allow the microphone to send voice notes."); }
+  const mime = ["audio/mp4", "audio/webm;codecs=opus", "audio/webm"].find((m) => MediaRecorder.isTypeSupported(m)) || "";
+  vr.rec = new MediaRecorder(vr.stream, mime ? { mimeType: mime } : {});
+  vr.chunks = []; vr.send = false;
+  vr.rec.ondataavailable = (e) => { if (e.data && e.data.size) vr.chunks.push(e.data); };
+  vr.rec.onstop = voiceDone;
+  vr.rec.start(250);
+  vr.t0 = Date.now();
+  $("#chatRecT").textContent = "0:00";
+  $("#chat").classList.add("recording");
+  syncSend();
+  vr.tick = setInterval(() => { const s = (Date.now() - vr.t0) / 1000; $("#chatRecT").textContent = fmtDur(s); if (s >= 120) voiceStop(true); }, 200);
+}
+function voiceStop(send) { vr.send = send; if (vr.rec && vr.rec.state === "recording") vr.rec.stop(); }
+async function voiceDone() {
+  clearInterval(vr.tick);
+  if (vr.stream) vr.stream.getTracks().forEach((t) => t.stop());
+  const secs = (Date.now() - vr.t0) / 1000;
+  const type = ((vr.rec && vr.rec.mimeType) || "audio/mp4").split(";")[0];
+  const chunks = vr.chunks, send = vr.send;
+  vr.rec = null; vr.stream = null;
+  $("#chat").classList.remove("recording");
+  syncSend();
+  if (!send || secs < 0.7) return;
+  await sendMedia("voice", new Blob(chunks, { type }), type.indexOf("mp4") > -1 ? "m4a" : "webm", type, Math.round(secs));
+}
+$("#chatRecX").onclick = () => voiceStop(false);
+
+// ----- playing voice notes, opening photos, emoji reactions -----
+function playVoice(btn) {
+  const src = btn.dataset.src;
+  if (!src) return;
+  if (vAud && vSrc === src) { vAud.paused ? vAud.play() : vAud.pause(); return; }
+  if (vAud) vAud.pause();
+  $$(".vplay.on").forEach((b) => b.classList.remove("on"));
+  vAud = new Audio(src); vSrc = src;
+  const el = () => $(`.vplay[data-src="${CSS.escape(src)}"]`);
+  vAud.onplay = () => { const b = el(); if (b) b.classList.add("on"); };
+  vAud.onpause = () => { const b = el(); if (b) b.classList.remove("on"); };
+  vAud.ontimeupdate = () => { const b = el(); if (b && vAud.duration) b.parentElement.querySelector(".vbar i").style.width = (vAud.currentTime / vAud.duration * 100) + "%"; };
+  vAud.onended = () => { const b = el(); if (b) { b.classList.remove("on"); b.parentElement.querySelector(".vbar i").style.width = "0"; } };
+  vAud.play().catch(() => toast("Couldn't play that voice note."));
+}
+async function reactTo(mid, emoji) {
+  if (!mid || !sb) return;
+  const me = meId(), cur = ((chat.reacts.get(mid) || []).find((r) => r.user_id === me) || {}).emoji;
+  setReact(mid, me, cur === emoji ? null : emoji);
+  renderChat();
+  const r = await sb.rpc("react_message", { p_msg: mid, p_emoji: emoji });
+  if (r.error) { setReact(mid, me, cur || null); renderChat(); toast(/does not exist|schema cache|could not find/i.test(r.error.message || "") ? "Run mixo_update.sql in Supabase first." : inboxErr(r.error)); }
+}
+function hideReactBar() { $("#reactBar").classList.add("hidden"); }
+function showReactBar(bw) {
+  rxFor = bw.dataset.m;
+  const bar = $("#reactBar");
+  bar.innerHTML = REACTS.map((e) => `<button type="button" data-e="${e}">${e}</button>`).join("");
+  bar.classList.remove("hidden");
+  const r = bw.getBoundingClientRect(), w = bar.offsetWidth;
+  bar.style.left = Math.min(Math.max(8, r.left + r.width / 2 - w / 2), innerWidth - w - 8) + "px";
+  bar.style.top = Math.max(80, r.top - 58) + "px";
+  if (navigator.vibrate) navigator.vibrate(10);
+}
+const chatBody = $("#chatBody");
+chatBody.addEventListener("pointerdown", (e) => {
+  const bw = e.target.closest(".bw");
+  if (!bw || e.target.closest(".rxc") || e.target.closest(".vplay")) return;
+  clearTimeout(lpTimer);
+  lpTimer = setTimeout(() => showReactBar(bw), 380);
+});
+["pointerup", "pointermove", "pointercancel", "scroll"].forEach((ev) => chatBody.addEventListener(ev, () => clearTimeout(lpTimer), true));
+chatBody.addEventListener("contextmenu", (e) => e.preventDefault());
+chatBody.addEventListener("dblclick", (e) => { const bw = e.target.closest(".bw"); if (bw) reactTo(bw.dataset.m, "❤️"); });
+chatBody.addEventListener("click", (e) => {
+  const v = e.target.closest(".vplay");
+  if (v) return playVoice(v);
+  const chip = e.target.closest(".rxc");
+  if (chip) return reactTo(chip.closest(".bw").dataset.m, chip.dataset.e);
+  const img = e.target.closest("img[data-full]");
+  if (img) { $("#lbImg").src = img.src; $("#lightbox").classList.remove("hidden"); }
+});
+$("#lightbox").onclick = () => $("#lightbox").classList.add("hidden");
+$("#reactBar").addEventListener("click", (e) => {
+  const b = e.target.closest("button");
+  if (!b) return;
+  hideReactBar();
+  reactTo(rxFor, b.dataset.e);
+});
+document.addEventListener("pointerdown", (e) => { if (!e.target.closest("#reactBar")) hideReactBar(); }, true);
+
+// ----- header buttons -----
 $("#chatBack").onclick = closeChat;
+$("#chatCall").onclick = () => toast(CALLS_READY ? "Calling..." : "Calls aren't available yet.");
 $("#chatWho").onclick = () => {
   const p = chat.user;
   if (!p) return;
@@ -1769,9 +1966,6 @@ async function answerReq(ok) {
 $("#chatAccept").onclick = () => answerReq(true);
 $("#chatReject").onclick = () => answerReq(false);
 
-const autoGrow = () => { const t = $("#chatInput"); t.style.height = "auto"; t.style.height = Math.min(t.scrollHeight, 120) + "px"; };
-$("#chatInput").addEventListener("input", autoGrow);
-
 // keep the input above the phone keyboard
 function fitChat() {
   const vv = window.visualViewport;
@@ -1779,8 +1973,7 @@ function fitChat() {
   const c = $("#chat");
   c.style.height = vv.height + "px";
   c.style.top = vv.offsetTop + "px";
-  const b = $("#chatBody");
-  b.scrollTop = b.scrollHeight;
+  chatBody.scrollTop = chatBody.scrollHeight;
 }
 if (window.visualViewport) { visualViewport.addEventListener("resize", fitChat); visualViewport.addEventListener("scroll", fitChat); }
 
@@ -1793,7 +1986,7 @@ $("#cMsg").onclick = () => {
     avatar_url: ($("#cAvatar img") || {}).src || "", bio: $("#cBio").textContent, country: country === "Not set" ? "" : country });
 };
 
-// ----- instant delivery (Supabase Realtime), with a slow fallback if it ever drops -----
+// ----- instant delivery (Supabase Realtime), plus the green "online" dot -----
 async function onMsgEvent(p) {
   const m = p.new;
   if (!m || !m.id) return;
@@ -1809,11 +2002,18 @@ async function onMsgEvent(p) {
       chat.conv = inbox.convs.find((c) => c.id === m.conversation_id) || chat.conv;
     }
     if (chat.conv && m.conversation_id === chat.conv.id) {
+      await signMedia([m]);
       addMsg(m);
       if (m.sender_id !== meId()) markRead();
     }
   }
   refreshInboxSoon();
+}
+function onReactEvent(p) {
+  const row = p.eventType === "DELETE" ? p.old : p.new;
+  if (!row || !row.message_id || !chat.open || !chat.msgs.some((m) => m.id === row.message_id)) return;
+  setReact(row.message_id, row.user_id, p.eventType === "DELETE" ? null : row.emoji);
+  renderChat();
 }
 function startInbox() {
   if (!sb || !MIXO.user || rtChannel) return;
@@ -1821,7 +2021,11 @@ function startInbox() {
   rtChannel = sb.channel("inbox-" + meId())
     .on("postgres_changes", { event: "*", schema: "public", table: "messages" }, onMsgEvent)
     .on("postgres_changes", { event: "*", schema: "public", table: "conversations" }, refreshInboxSoon)
+    .on("postgres_changes", { event: "*", schema: "public", table: "message_reactions" }, onReactEvent)
     .subscribe((s) => { rtOK = s === "SUBSCRIBED"; });
+  presCh = sb.channel("mixo-online", { config: { presence: { key: meId() } } });
+  presCh.on("presence", { event: "sync" }, () => { online = new Set(Object.keys(presCh.presenceState())); paintOnline(); })
+    .subscribe(async (s) => { if (s === "SUBSCRIBED") await presCh.track({ at: Date.now() }); });
   pollTimer = setInterval(() => {
     if (rtOK || document.hidden) return;
     refreshInbox();
@@ -1829,8 +2033,8 @@ function startInbox() {
   }, 8000);
 }
 function stopInbox() {
-  if (rtChannel && sb) sb.removeChannel(rtChannel);
-  rtChannel = null; rtOK = false;
+  if (sb) { if (rtChannel) sb.removeChannel(rtChannel); if (presCh) sb.removeChannel(presCh); }
+  rtChannel = null; presCh = null; rtOK = false; online = new Set();
   clearInterval(pollTimer);
   inbox.convs = []; inbox.unread = new Map(); inbox.loaded = false; inbox.error = ""; inbox.tab = "msg";
   closeChat();
@@ -1842,7 +2046,6 @@ document.addEventListener("visibilitychange", () => {
   if (chat.open) loadChatMsgs();
 });
 renderInbox();
-
 
 // ============ SAFETY: block, report, privacy settings, delete account ============
 const safeErr = (e) => {
@@ -1945,27 +2148,13 @@ $("#repSend").onclick = async () => {
   toast("Thanks. We'll review your report.");
 };
 
-// ----- settings: who can message me, blocked list, delete account -----
-function paintDm() {
-  const v = (MIXO.profile && MIXO.profile.dm_privacy) || "everyone";
-  $$("#dmSeg button").forEach((b) => b.classList.toggle("on", b.dataset.v === v));
-}
+// ----- settings: blocked list, log out, delete account -----
 $("#setBtn").onclick = () => {
   if (!MIXO.user) return toast("Log in with a real account first.");
-  paintDm();
   $("#setSheet").classList.remove("hidden");
 };
 $("#setClose").onclick = () => $("#setSheet").classList.add("hidden");
 $("#setSheet").addEventListener("click", (e) => { if (e.target.id === "setSheet") $("#setSheet").classList.add("hidden"); });
-$("#dmSeg").addEventListener("click", async (e) => {
-  const b = e.target.closest("button");
-  if (!b || !sb || !MIXO.user) return;
-  const r = await sb.from("profiles").update({ dm_privacy: b.dataset.v }).eq("id", meId()).select().single();
-  if (r.error) return toast(safeErr(r.error));
-  MIXO.profile = r.data;
-  paintDm();
-  toast("Saved");
-});
 
 $("#setBlocked").onclick = async () => {
   $("#setSheet").classList.add("hidden");
@@ -1998,7 +2187,7 @@ $("#setDelete").onclick = async () => {
   if (!(await confirmBox("Really delete?", "Last chance. Everything will be gone.", "Yes, delete"))) return;
   toast("Deleting...");
   try { // remove my uploaded videos and pictures first
-    for (const bucket of ["videos", "avatars"]) {
+    for (const bucket of ["videos", "avatars", "chat"]) {
       const ls = await sb.storage.from(bucket).list(meId(), { limit: 1000 });
       if (ls.data && ls.data.length) await sb.storage.from(bucket).remove(ls.data.map((f) => meId() + "/" + f.name));
     }
@@ -2008,3 +2197,86 @@ $("#setDelete").onclick = async () => {
   await $("#logoutBtn").onclick();
   toast("Your account was deleted.");
 };
+
+
+// ============ SHARE ============
+async function sharePost(id) {
+  const p = postCache.get(String(id)) || {};
+  const url = location.href.split("#")[0] + "#post=" + encodeURIComponent(id);
+  try {
+    if (navigator.share) { await navigator.share({ title: "MIXO", text: p.text || "Watch this on MIXO", url }); return; }
+  } catch (e) { if (e && e.name === "AbortError") return; }
+  try { await navigator.clipboard.writeText(url); toast("Link copied"); }
+  catch (e) {
+    const t = document.createElement("textarea");
+    t.value = url; document.body.appendChild(t); t.select();
+    try { document.execCommand("copy"); toast("Link copied"); } catch (e2) { toast("Couldn't copy the link."); }
+    t.remove();
+  }
+}
+function openFromHash() {
+  const m = location.hash.match(/^#post=(.+)$/);
+  if (!m || !MIXO.user) return;
+  history.replaceState(null, "", location.href.split("#")[0]);
+  openPostView(decodeURIComponent(m[1]));
+}
+
+// ============ VIEWS (footprints) ============
+const viewedSet = new Set();
+function paintViews(id) {
+  const p = postCache.get(String(id));
+  if (!p) return;
+  $$(`[data-id="${id}"] .vwn`).forEach((el) => (el.textContent = fmt(p.views || 0)));
+}
+async function recordView(id) {
+  id = String(id);
+  if (!MIXO.user || !sb || viewedSet.has(id)) return;
+  const p = postCache.get(id);
+  if (!p || p.uid === MIXO.user.id) return;
+  viewedSet.add(id);
+  const r = await sb.rpc("record_view", { p_post: id });
+  if (!r.error && r.data === true) { p.views = (p.views || 0) + 1; paintViews(id); }
+}
+if ("IntersectionObserver" in window) {
+  const viewObs = new IntersectionObserver((es) => es.forEach((en) => {
+    if (!en.isIntersecting) return;
+    viewObs.unobserve(en.target);
+    recordView(en.target.dataset.id);
+  }), { threshold: 0.6 });
+  const watch = (n) => {
+    if (n.nodeType !== 1) return;
+    if (n.matches(".clip[data-id], .pc[data-id]")) viewObs.observe(n);
+    n.querySelectorAll(".clip[data-id], .pc[data-id]").forEach((x) => viewObs.observe(x));
+  };
+  new MutationObserver((ms) => ms.forEach((m) => m.addedNodes.forEach(watch))).observe($("#app"), { childList: true, subtree: true });
+}
+
+// ============ VIDEO REPLIES (only the person who posted the video) ============
+$("#vrFile").onchange = (e) => {
+  const f = e.target.files[0];
+  e.target.value = "";
+  if (!f || !cam.reply) return;
+  const r = cam.reply;
+  camClose();
+  sendVideoReply(r, f);
+};
+async function sendVideoReply(r, file) {
+  if (!file || !r) return;
+  if (file.size > 60 * 1024 * 1024) return toast("That video is too big. Keep it under 60 MB.");
+  toast("Posting video reply...");
+  const ext = (file.name && file.name.split(".").pop().toLowerCase().replace(/[^a-z0-9]/g, "")) || (file.type.indexOf("mp4") > -1 ? "mp4" : "webm");
+  const path = meId() + "/reply-" + Date.now() + "." + ext;
+  const up = await sb.storage.from("videos").upload(path, file, { contentType: file.type || "video/mp4" });
+  if (up.error) return toast("Couldn't upload that video.");
+  const url = sb.storage.from("videos").getPublicUrl(path).data.publicUrl;
+  const ins = await sb.from("post_comments").insert({ post_id: comId, body: "", parent_id: r.parent, video_url: url });
+  if (ins.error) {
+    sb.storage.from("videos").remove([path]);
+    return toast(/video_url|schema cache/i.test(ins.error.message || "") ? "Run mixo_update.sql in Supabase first." : /only the poster/i.test(ins.error.message || "") ? "Only the person who posted can reply with video." : socialErr(ins.error));
+  }
+  const p = postCache.get(String(comId));
+  const c = await sb.from("post_comments").select("id", { count: "exact", head: true }).eq("post_id", comId);
+  if (p && !c.error && typeof c.count === "number") { p.comments = c.count; paintPost(comId); }
+  toast("Video reply posted");
+  loadComments();
+}
