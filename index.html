@@ -5,14 +5,17 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#06123a">
 <title>MIXO</title>
-<link rel="stylesheet" href="style.css?v=14">
+<link rel="stylesheet" href="style.css?v=25">
 </head>
 <body>
 
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
 <defs>
-<linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#19d3ff"/><stop offset="1" stop-color="#1f5bff"/></linearGradient>
+<linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#9a7bff"/><stop offset="1" stop-color="#2a5bff"/></linearGradient>
 <linearGradient id="hg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8ff4ff"/><stop offset=".55" stop-color="#2f8bff"/><stop offset="1" stop-color="#1237d6"/></linearGradient>
+<radialGradient id="eg" cx=".35" cy=".3" r=".85"><stop offset="0" stop-color="#8ff4ff"/><stop offset=".5" stop-color="#2f8bff"/><stop offset="1" stop-color="#0b2a9a"/></radialGradient>
+<linearGradient id="cbg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#4aa8ff"/><stop offset=".55" stop-color="#2a4dff"/><stop offset="1" stop-color="#5a2bd8"/></linearGradient>
+<linearGradient id="crg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ff5a7a"/><stop offset="1" stop-color="#d81848"/></linearGradient>
 </defs>
 <symbol id="i-home" viewBox="0 0 24 24"><path d="M3.5 11 12 3.5 20.5 11v8.2a1.3 1.3 0 0 1-1.3 1.3H15v-5.5H9v5.5H4.8a1.3 1.3 0 0 1-1.3-1.3z"/></symbol>
 <symbol id="i-inbox" viewBox="0 0 24 24"><path d="M4 5h16a1.5 1.5 0 0 1 1.5 1.5v9a1.5 1.5 0 0 1-1.5 1.5h-9.5L6 20.5V17H4a1.5 1.5 0 0 1-1.5-1.5v-9A1.5 1.5 0 0 1 4 5z"/><path d="M7.5 10h9M7.5 13h5"/></symbol>
@@ -30,14 +33,6 @@
 <symbol id="i-image" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="3"/><circle cx="9" cy="10" r="1.6"/><path d="m4 17 5-4.5 4 3.5 3-2.5 4.5 4"/></symbol>
 <symbol id="i-topic" viewBox="0 0 24 24"><path d="M9 4 7.5 20M16.5 4 15 20M4.5 9h16M3.5 15h16"/></symbol>
 <symbol id="i-back" viewBox="0 0 24 24"><path d="m14.5 5-7 7 7 7"/></symbol>
-<symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
-<symbol id="i-flip" viewBox="0 0 24 24"><path d="M20 12a8 8 0 0 0-14-5.3L4 9M4 4v5h5M4 12a8 8 0 0 0 14 5.3L20 15M20 20v-5h-5"/></symbol>
-<symbol id="i-bolt" viewBox="0 0 24 24"><path d="M13 3 5 13.5h6L10 21l8-10.5h-6z"/></symbol>
-<symbol id="i-timer" viewBox="0 0 24 24"><circle cx="12" cy="13" r="7.5"/><path d="M12 9v4l2.5 1.5M9.5 3h5"/></symbol>
-<symbol id="i-trash" viewBox="0 0 24 24"><path d="M4.5 7h15M9.5 7V4.5h5V7M6.5 7l.8 12.5h9.4L17.5 7M10 11v5M14 11v5"/></symbol>
-<symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></symbol>
-<symbol id="i-pause" viewBox="0 0 24 24"><path d="M8 5.5v13M16 5.5v13"/></symbol>
-<symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></symbol>
 <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5"/></symbol>
 <symbol id="i-mail" viewBox="0 0 24 24"><rect x="3" y="5.5" width="18" height="13" rx="3"/><path d="m4 8 8 6 8-6"/></symbol>
 <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="10" rx="3"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/></symbol>
@@ -45,8 +40,41 @@
 <symbol id="i-eyeoff" viewBox="0 0 24 24"><path d="M2.5 12S6 5.5 12 5.5c2 0 3.7.7 5.2 1.7M21.5 12S18 18.5 12 18.5c-2 0-3.7-.7-5.2-1.7"/><circle cx="12" cy="12" r="3"/><path d="M4 4l16 16"/></symbol>
 <symbol id="i-phone" viewBox="0 0 24 24"><rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M11 18.5h2"/></symbol>
 <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
+<symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+<symbol id="i-flip" viewBox="0 0 24 24"><path d="M4 11a8 8 0 0 1 14-4l2 2M20 13a8 8 0 0 1-14 4l-2-2"/><path d="M20 4v5h-5M4 20v-5h5"/></symbol>
+<symbol id="i-bolt" viewBox="0 0 24 24"><path d="M13 3 5.5 13.5H11L10 21l8-10.5h-5.5z"/></symbol>
+<symbol id="i-timer" viewBox="0 0 24 24"><circle cx="12" cy="13.5" r="7.5"/><path d="M12 9.5v4l2.5 1.5M9.5 3h5"/></symbol>
+<symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></symbol>
+<symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M9.5 7V4.5h5V7M6.5 7l.9 12.5h9.2L17.5 7M10 11v5.5M14 11v5.5"/></symbol>
 <symbol id="i-chev" viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></symbol>
 <symbol id="i-pin" viewBox="0 0 24 24"><path d="M12 21s-6.5-5.8-6.5-11a6.5 6.5 0 0 1 13 0c0 5.2-6.5 11-6.5 11z"/><circle cx="12" cy="10" r="2.3"/></symbol>
+<symbol id="i-earth" viewBox="0 0 48 48">
+  <path d="M1 24A23 7.5 0 0 1 47 24" transform="rotate(-24 24 24)" fill="none" stroke="#7fdcff" stroke-opacity=".6" stroke-width="2.2" stroke-linecap="round"/>
+  <circle cx="24" cy="24" r="16.5" fill="url(#eg)" stroke="none"/>
+  <path d="M13.5 16c3-3.5 7.5-4.5 9.5-2.2 1.2 2-1 3.2-1 5.2s-3 2-4 4-4.5 1-5.5-1-1-4 1-6z" fill="#e4fcff" fill-opacity=".92" stroke="none"/>
+  <path d="M27 24c3-1.2 7.2 0 8.2 3s-1 7-4 8-4.2-2-4.2-4-2.2-4 0-7z" fill="#e4fcff" fill-opacity=".92" stroke="none"/>
+  <path d="M29.5 12.5c2.2-.2 4.2.8 5.3 2.6-2 1.2-4.2 1.2-5.3 0z" fill="#e4fcff" fill-opacity=".8" stroke="none"/>
+  <ellipse cx="18" cy="14" rx="7" ry="3.5" transform="rotate(-30 18 14)" fill="#fff" fill-opacity=".22" stroke="none"/>
+  <path d="M1 24A23 7.5 0 0 0 47 24" transform="rotate(-24 24 24)" fill="none" stroke="#19d3ff" stroke-width="2.6" stroke-linecap="round"/>
+  <path d="M0-6 1.5-1.5 6 0 1.5 1.5 0 6-1.5 1.5-6 0-1.5-1.5z" transform="translate(40 8)" fill="#fff" stroke="none"/>
+</symbol>
+<symbol id="i-send" viewBox="0 0 24 24"><path d="M21 3 10.5 13.5"/><path d="M21 3l-6.5 18-4-7.5L3 9.5z"/></symbol>
+<symbol id="i-flag" viewBox="0 0 24 24"><path d="M5.5 21.5V3.5"/><path d="M5.5 4.6c3-1.9 5.6-1.9 8 0s5 1.9 6 .8v8.2c-1 1.1-3.5 1.1-6-.8s-5-1.9-8 0z" fill="currentColor" fill-opacity=".28" stroke-linejoin="round"/></symbol>
+<symbol id="i-block" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/></symbol>
+<symbol id="i-feet" viewBox="0 0 24 24"><g fill="currentColor" stroke="none"><g transform="translate(8 10.5) rotate(-12) scale(.58)"><circle cx="-3.6" cy="3.4" r="1.25"/><circle cx="-1.3" cy="1.6" r="1.3"/><circle cx="1.5" cy="1.6" r="1.3"/><circle cx="3.7" cy="3.4" r="1.2"/><ellipse cx="0" cy="9.4" rx="4.3" ry="5"/><ellipse cx="0" cy="18.8" rx="2.9" ry="3.2"/></g><g transform="translate(16.5 1.2) rotate(12) scale(.58)"><circle cx="-3.6" cy="3.4" r="1.25"/><circle cx="-1.3" cy="1.6" r="1.3"/><circle cx="1.5" cy="1.6" r="1.3"/><circle cx="3.7" cy="3.4" r="1.2"/><ellipse cx="0" cy="9.4" rx="4.3" ry="5"/><ellipse cx="0" cy="18.8" rx="2.9" ry="3.2"/></g></g></symbol>
+<symbol id="i-call" viewBox="0 0 24 24"><path d="M6.6 3.4 9.2 3l1.6 4.3-2.1 1.5a11.5 11.5 0 0 0 6.5 6.5l1.5-2.1 4.3 1.6-.4 2.6a2.6 2.6 0 0 1-2.6 2.2A15.6 15.6 0 0 1 4.4 6a2.6 2.6 0 0 1 2.2-2.6z"/></symbol>
+<symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></symbol>
+<symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.5v13l11-6.5z" fill="currentColor" stroke="currentColor" stroke-linejoin="round"/></symbol>
+<symbol id="i-pause" viewBox="0 0 24 24"><rect x="6.5" y="5" width="4" height="14" rx="1.2" fill="currentColor" stroke="none"/><rect x="13.5" y="5" width="4" height="14" rx="1.2" fill="currentColor" stroke="none"/></symbol>
+<symbol id="chat-art" viewBox="0 0 440 300">
+  <ellipse cx="220" cy="238" rx="200" ry="36" fill="none" stroke="#3a6bff" stroke-opacity=".35" stroke-width="2"/>
+  <ellipse cx="220" cy="238" rx="150" ry="26" fill="none" stroke="#7a4bff" stroke-opacity=".5" stroke-width="2"/>
+  <ellipse cx="220" cy="236" rx="100" ry="18" fill="#2a4dff" fill-opacity=".25" stroke="#5ab0ff" stroke-width="2.5"/>
+  <path d="M252 96h68a38 38 0 0 1 38 38v34a38 38 0 0 1-38 38h-6l22 34-52-34h-32a38 38 0 0 1-38-38v-34a38 38 0 0 1 38-38z" fill="url(#crg)" opacity=".92"/>
+  <path d="M130 78h100a42 42 0 0 1 42 42v38a42 42 0 0 1-42 42h-52l-34 30 6-30h-20a42 42 0 0 1-42-42v-38a42 42 0 0 1 42-42z" fill="url(#cbg)" stroke="#9ad4ff" stroke-width="3"/>
+  <circle cx="142" cy="139" r="10" fill="#eef4ff"/><circle cx="180" cy="139" r="10" fill="#eef4ff"/><circle cx="218" cy="139" r="10" fill="#eef4ff"/>
+  <g stroke-linecap="round" stroke-width="7" fill="none"><path d="M84 66 64 54M76 90 48 84" stroke="#2fb4ff"/><path d="M350 62 372 46M358 88 386 80" stroke="#ff3a5e"/></g>
+</symbol>
 <symbol id="banner-art" viewBox="0 0 400 170" preserveAspectRatio="xMidYMid slice">
   <g fill="none" stroke-linecap="round">
     <path d="M-10 118C50 40 110 150 190 92S330 36 410 96" stroke="#d9f3ff" stroke-opacity=".85" stroke-width="2"/>
@@ -121,8 +149,8 @@
 
     <section id="inbox" class="page">
       <h2>Inbox</h2>
-      <div class="seg"><button class="on">Messages</button><button>Requests</button></div>
-      <div class="empty"><svg class="ic big"><use href="#i-inbox"/></svg><p>No messages yet.<br>Follow people and say hello.</p></div>
+      <div class="seg"><button class="on" id="inTabMsg">Messages</button><button id="inTabReq">Requests</button></div>
+      <div id="inList"></div>
     </section>
 
     <section id="explore" class="page">
@@ -149,25 +177,26 @@
         <div class="pav" id="pAvatar">M</div>
         <h2 id="pName">Your name</h2>
         <p class="puser" id="pUser">@username</p>
-        <p class="loc"><svg class="ic"><use href="#i-pin"/></svg><span id="pCountry" class="hint">Add your location</span></p>
+        <p class="loc"><svg class="ic"><use href="#i-pin"/></svg><span id="pCountry" class="hint">Detecting your country...</span></p>
         <p class="bio hint" id="pBio">Add a bio</p>
       </div>
       <div class="statcard">
-        <div><b>0</b><span>Following</span></div>
-        <div><b>0</b><span>Followers</span></div>
-        <div><b>0</b><span>Likes</span></div>
+        <div data-list="following"><b id="pFollowing">0</b><span>Following</span></div>
+        <div data-list="followers"><b id="pFollowers">0</b><span>Followers</span></div>
+        <div><b id="pLikes">0</b><span>Likes</span></div>
       </div>
-      <div class="prow one"><button class="pbtn main" id="editBtn">Edit profile</button></div>
+      <div class="prow"><button class="pbtn main" id="editBtn">Edit profile</button><button class="pbtn line" id="setBtn">Settings</button></div>
       <div class="ptabs" id="pTabs"><button class="on">Videos</button><button>Topics</button><button>Photos</button><button>Saved</button></div>
       <div class="ssub hidden" id="sSub"><button class="on">Videos</button><button>Topics</button><button>Photos</button></div>
       <div id="pGrid"></div>
-      <button class="logout" id="logoutBtn">Log out</button>
     </section>
 
     <section id="creator" class="page ppage">
-      <div class="pbanner">
+      <div class="pbanner" id="cBanner">
         <svg class="bart" aria-hidden="true"><use href="#banner-art"/></svg>
+        <img class="bimg hidden" id="cBannerImg" alt="">
         <button class="back" id="backBtn" aria-label="Back"><svg class="ic"><use href="#i-back"/></svg></button>
+        <button class="back right" id="cMore" aria-label="More"><svg class="ic moreic"><use href="#i-more"/></svg></button>
       </div>
       <div class="phead">
         <div class="pav" id="cAvatar">M</div>
@@ -177,26 +206,54 @@
         <p class="bio" id="cBio"></p>
       </div>
       <div class="statcard">
-        <div><b id="cFollowing">0</b><span>Following</span></div>
-        <div><b id="cFollowers">0</b><span>Followers</span></div>
+        <div data-list="following"><b id="cFollowing">0</b><span>Following</span></div>
+        <div data-list="followers"><b id="cFollowers">0</b><span>Followers</span></div>
         <div><b id="cLikes">0</b><span>Likes</span></div>
       </div>
       <div class="prow">
         <button class="pbtn main" id="cFollow">Follow</button>
         <button class="pbtn line" id="cMsg"><svg class="ic"><use href="#i-comment"/></svg>Message</button>
       </div>
-      <p class="sub">Preview profile</p>
+      <p class="sub" id="cPrev">Preview profile</p>
+      <div class="ptabs hidden" id="cTabs"><button class="on">Videos</button><button>Topics</button><button>Photos</button></div>
+      <div id="cGrid"></div>
     </section>
   </main>
 
   <nav id="nav">
     <button data-page="home" class="on"><svg class="ic"><use href="#i-home"/></svg><span>Home</span></button>
-    <button data-page="inbox"><svg class="ic"><use href="#i-inbox"/></svg><span>Inbox</span></button>
+    <button data-page="inbox"><svg class="ic"><use href="#i-inbox"/></svg><span>Inbox</span><i id="inBadge" class="nbdg hidden">0</i></button>
     <button id="createBtn" class="mk" aria-label="Create"><svg class="ic"><use href="#i-plus"/></svg></button>
     <button data-page="explore"><svg class="ic"><use href="#i-explore"/></svg><span>Explore</span></button>
     <button data-page="connect"><svg class="ic"><use href="#i-connect"/></svg><span>Connect</span></button>
     <button data-page="profile"><svg class="ic"><use href="#i-user"/></svg><span>Profile</span></button>
   </nav>
+
+  <div id="chat" class="chat hidden ch-empty">
+    <svg class="ch-art" aria-hidden="true"><use href="#chat-art"/></svg>
+    <div class="ch-top">
+      <button type="button" id="chatBack" class="ch-back" aria-label="Back"><svg class="ic"><use href="#i-back"/></svg></button>
+      <button type="button" id="chatWho" class="ch-who"><div class="chav"><div class="iav" id="chatAv"></div><i class="dot hidden" id="chatDot"></i></div><div class="itx"><b id="chatName">Name</b><span class="csub"><span id="chatUser">@user</span><span id="chatStat"></span></span></div></button>
+      <button type="button" id="chatCall" class="ch-call" aria-label="Call"><svg class="ic"><use href="#i-call"/></svg></button>
+      <button type="button" id="chatMore" class="ch-more" aria-label="More"><svg class="ic moreic"><use href="#i-more"/></svg></button>
+    </div>
+    <div id="chatBody" class="ch-body"></div>
+    <div id="chatReq" class="ch-req hidden">
+      <p>Accept this request to start chatting.</p>
+      <div><button type="button" id="chatReject" class="ch-no">Reject</button><button type="button" id="chatAccept" class="ch-yes">Accept</button></div>
+    </div>
+    <form id="chatForm" class="ch-form">
+      <button type="button" id="chatPlus" class="ch-plus" aria-label="Send a photo"><svg class="ic"><use href="#i-plus"/></svg></button>
+      <textarea id="chatInput" rows="1" maxlength="2000" placeholder="Message..." autocomplete="off"></textarea>
+      <div class="ch-rec"><i class="rd"></i><span id="chatRecT">0:00</span><button type="button" id="chatRecX" aria-label="Cancel">&times;</button></div>
+      <button type="submit" id="chatSend" class="ch-send mic" aria-label="Send"><svg class="ic ic-send"><use href="#i-send"/></svg><svg class="ic ic-mic"><use href="#i-mic"/></svg></button>
+    </form>
+    <input type="file" id="chatImg" accept="image/*" hidden>
+  </div>
+
+  <div id="limitModal" class="lim hidden"><div class="lim-card"><p>You can only send up to one message until user accepts</p><button type="button" id="limitOk">CONTINUE</button></div></div>
+  <div id="reactBar" class="rbar hidden"></div>
+  <div id="lightbox" class="lbx hidden"><img id="lbImg" alt=""><video id="lbVid" class="hidden" controls playsinline></video></div>
 
   <div id="sheet" class="sheet hidden">
     <div class="panel">
@@ -213,8 +270,7 @@
         <video id="postVid" class="hidden" muted loop playsinline></video>
         <div class="vph"><svg class="ic big"><use href="#i-video"/></svg><span>Choose a video</span><small>Up to 30 seconds</small></div>
       </div>
-      <input type="file" id="postFile" accept="video/*" hidden>
-      <div id="postSound" class="sndchip hidden"><svg class="ic"><use href="#i-music"/></svg><span></span><button type="button" aria-label="Remove sound">&times;</button></div>
+      <input type="file" id="postFile" accept="video/*" multiple hidden>
       <label>Caption</label>
       <textarea name="caption" maxlength="150" rows="2" placeholder="Say something about your video"></textarea>
       <p id="postMsg" class="msg"></p>
@@ -270,69 +326,6 @@
       <input type="file" id="comFile" accept="image/*" hidden>
     </div>
   </div>
-  <div id="confirmSheet" class="sheet hidden">
-    <div class="panel">
-      <h3 id="cfTitle">Delete?</h3>
-      <p id="cfText" class="cf-text"></p>
-      <div class="erow">
-        <button type="button" class="pbtn line" id="cfNo">Cancel</button>
-        <button type="button" class="pbtn danger" id="cfYes">Delete</button>
-      </div>
-    </div>
-  </div>
-  <div id="cam" class="cam hidden">
-    <div class="cam-view">
-      <video id="camVid" playsinline muted autoplay></video>
-      <div id="camMsg" class="cam-msg hidden"></div>
-      <div id="camCount" class="cam-count hidden"></div>
-    </div>
-    <button class="cam-x" id="camClose" aria-label="Close"><svg class="ic"><use href="#i-close"/></svg></button>
-    <button id="camSound" class="cam-sound hidden" type="button"><svg class="ic"><use href="#i-music"/></svg><span></span><b>&times;</b></button>
-    <div id="camRec" class="cam-rec hidden">0:00</div>
-    <div class="cam-rail">
-      <button id="camFlip" aria-label="Flip camera"><svg class="ic"><use href="#i-flip"/></svg></button>
-      <button id="camFlash" aria-label="Flash"><svg class="ic"><use href="#i-bolt"/></svg></button>
-      <button id="camTimer" aria-label="3 second timer"><svg class="ic"><use href="#i-timer"/></svg></button>
-    </div>
-    <div class="cam-bottom">
-      <div class="cam-modes" id="camModes">
-        <button data-m="15" class="on">15s</button><button data-m="30">30s</button><button data-m="photo">PHOTO</button><button data-m="text">TEXT</button>
-      </div>
-      <div class="cam-row">
-        <button class="cam-gal" id="camGallery" aria-label="Choose from library"><svg class="ic"><use href="#i-image"/></svg></button>
-        <button class="shutter" id="camShutter" aria-label="Capture">
-          <svg viewBox="0 0 84 84"><circle class="bg" cx="42" cy="42" r="38" fill="none" stroke-width="5"/><circle class="pr" id="camRing" cx="42" cy="42" r="38" fill="none" stroke-width="5" stroke-linecap="round"/></svg>
-          <span class="in"></span>
-        </button>
-        <span></span>
-      </div>
-    </div>
-    <input type="file" id="camPick" hidden>
-    <input type="file" id="camShot" hidden capture="environment">
-  </div>
-  <div id="soundPage" class="spage hidden">
-    <div class="sp-top"><button id="spBack" aria-label="Back"><svg class="ic"><use href="#i-back"/></svg></button></div>
-    <div class="sp-scroll">
-      <div class="sp-head">
-        <div class="sp-ring"><div class="sp-av" id="spAv"></div></div>
-        <div class="sp-info">
-          <h2>Original Sound <button id="spPlayBtn" class="sp-mini" aria-label="Play sound"><svg class="ic"><use href="#i-play"/></svg></button></h2>
-          <button id="spUser" class="sp-user" type="button"><span></span><svg class="ic"><use href="#i-chev"/></svg></button>
-          <p id="spCount"></p>
-        </div>
-      </div>
-      <button id="spSave" class="sp-save" type="button"><svg class="ic"><use href="#i-save"/></svg><span>Save</span></button>
-      <div id="spGrid" class="sp-grid"></div>
-    </div>
-    <div class="sp-bar">
-      <button id="spPreview" class="sp-b line" type="button"><svg class="ic"><use href="#i-play"/></svg><span>Play sound</span></button>
-      <button id="spUse" class="sp-b main" type="button"><svg class="ic"><use href="#i-mic"/></svg><span>Use sound</span></button>
-    </div>
-  </div>
-  <div id="vidView" class="vview hidden">
-    <video id="vvVid" playsinline loop></video>
-    <button id="vvClose" aria-label="Close"><svg class="ic"><use href="#i-close"/></svg></button>
-  </div>
   <div id="editSheet" class="sheet hidden">
     <form class="panel form" id="editForm" novalidate>
       <h3>Edit profile</h3>
@@ -350,14 +343,80 @@
       <label>Bio</label>
       <textarea name="bio" maxlength="100" rows="2"></textarea>
       <label>Country</label>
-      <input name="country" list="countries" maxlength="40" autocomplete="off">
-      <datalist id="countries"></datalist>
+      <div class="cpick" id="countryPick">
+        <button type="button" data-v="real" class="on"><svg class="ic"><use href="#i-lock"/></svg><span id="cpReal">Detecting...</span></button>
+        <button type="button" data-v="earth"><svg class="ic earth"><use href="#i-earth"/></svg><span>Earth</span></button>
+      </div>
+      <p class="tcount cnote">Your country is found automatically and can't be changed. You can show Earth instead.</p>
       <p id="editMsg" class="msg"></p>
       <div class="erow">
         <button type="button" class="pbtn line" id="editCancel">Cancel</button>
         <button type="submit" class="pbtn main" id="editSave">Save</button>
       </div>
     </form>
+  </div>
+  <div id="listSheet" class="sheet hidden">
+    <div class="panel lpanel">
+      <h3 id="lsTitle">Followers</h3>
+      <div id="lsBody"></div>
+    </div>
+  </div>
+
+  <div id="actSheet" class="sheet hidden">
+    <div class="panel">
+      <h3 id="actTitle">@user</h3>
+      <div id="actBody"></div>
+    </div>
+  </div>
+
+  <div id="reportSheet" class="sheet hidden">
+    <div class="panel lpanel">
+      <h3>Report</h3>
+      <p class="tcount cnote" id="repWho"></p>
+      <div class="rsn" id="repReasons"></div>
+      <textarea id="repDetails" class="rtxt" maxlength="300" rows="2" placeholder="Add details (optional)"></textarea>
+      <p id="repMsg" class="msg"></p>
+      <div class="erow">
+        <button type="button" class="pbtn line" id="repCancel">Cancel</button>
+        <button type="button" class="pbtn main" id="repSend">Send report</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="setSheet" class="sheet hidden">
+    <div class="panel lpanel">
+      <h3>Settings</h3>
+      <button type="button" class="opt" id="setBlocked"><svg class="ic"><use href="#i-block"/></svg>Blocked accounts</button>
+      <button type="button" class="opt danger" id="setDelete"><svg class="ic"><use href="#i-trash"/></svg>Delete my account</button>
+      <button type="button" class="opt danger" id="logoutBtn"><svg class="ic"><use href="#i-user"/></svg>Log out</button>
+      <button type="button" class="opt" id="setClose">Close</button>
+    </div>
+  </div>
+
+  <div id="blkSheet" class="sheet hidden">
+    <div class="panel lpanel">
+      <h3>Blocked accounts</h3>
+      <div id="blkBody"></div>
+    </div>
+  </div>
+
+  <div id="confirmSheet" class="sheet hidden">
+    <div class="panel cbox">
+      <div class="dhead">
+        <svg class="sparks" viewBox="0 0 200 40" aria-hidden="true" fill="none" stroke-linecap="round" stroke-width="3">
+          <path d="M44 8 36 2M40 18H27M44 28 36 34" stroke="#2f8bff"/>
+          <path d="M156 8 164 2M160 18H173M156 28 164 34" stroke="#ff4a62"/>
+        </svg>
+        <div class="cicon"><i><svg class="ic"><use href="#i-trash"/></svg></i></div>
+      </div>
+      <h3 id="cfTitle">Delete?</h3>
+      <div class="dbar"><i></i><i></i></div>
+      <p id="cfText"></p>
+      <div class="erow">
+        <button type="button" class="pbtn line" id="cfNo"><svg class="ic"><use href="#i-x"/></svg>Cancel</button>
+        <button type="button" class="pbtn danger" id="cfYes"><svg class="ic"><use href="#i-trash"/></svg><span id="cfYesTxt">Delete</span></button>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -379,8 +438,85 @@
   <p class="chint">Drag to move. Pinch or use the slider to zoom.</p>
 </div>
 
+<div id="cam" class="cam hidden" data-state="idle">
+  <video id="camVid" playsinline muted autoplay></video>
+  <div class="cam-top">
+    <button type="button" class="cbtn" id="camClose" aria-label="Close camera"><svg class="ic"><use href="#i-x"/></svg></button>
+  </div>
+  <button type="button" class="cam-snd" id="camSound"><svg class="ic"><use href="#i-music"/></svg><span id="camSoundTxt">Add sound</span><svg class="ic hidden" id="camSoundX"><use href="#i-x"/></svg></button>
+  <div class="cam-rail">
+    <button type="button" class="rb" id="camFlip"><span class="cbtn"><svg class="ic"><use href="#i-flip"/></svg></span>Flip</button>
+    <button type="button" class="rb hidden" id="camFlash"><span class="cbtn"><svg class="ic"><use href="#i-bolt"/></svg></span>Flash</button>
+    <button type="button" class="rb" id="camTimer"><span class="cbtn"><svg class="ic"><use href="#i-timer"/></svg></span>Timer</button>
+  </div>
+  <div class="cam-time hidden" id="camTime">0:00</div>
+  <div class="cam-count hidden" id="camCount">3</div>
+  <div class="cam-bottom">
+    <div class="cam-modes" id="camModes"><button type="button" data-s="30">30s</button><button type="button" data-s="15" class="on">15s</button></div>
+    <div class="cam-row">
+      <button type="button" class="cam-up" id="camUp"><span class="cbtn"><svg class="ic"><use href="#i-image"/></svg></span>Upload</button>
+      <button type="button" class="rec" id="camRec" aria-label="Record"><svg viewBox="0 0 100 100"><circle class="trk" cx="50" cy="50" r="46"/><circle class="prog" id="camProg" cx="50" cy="50" r="46"/></svg><i></i></button>
+      <span></span>
+    </div>
+  </div>
+  <div class="cam-review hidden" id="camReview">
+    <video id="camRevVid" playsinline loop></video>
+    <div class="rv-bar">
+      <button type="button" class="pbtn line" id="camRetake">Retake</button>
+      <button type="button" class="pbtn main" id="camNext">Next</button>
+    </div>
+  </div>
+  <div class="cam-err hidden" id="camErr">
+    <svg class="ic big"><use href="#i-video"/></svg>
+    <p id="camErrTxt"></p>
+    <button type="button" class="pbtn main" id="camErrBtn">Open phone camera</button>
+    <button type="button" class="pbtn line" id="camErrClose">Close</button>
+  </div>
+  <input type="file" id="camNative" accept="video/*" capture hidden>
+  <input type="file" id="vrFile" accept="video/*" multiple hidden>
+</div>
+
+<div id="sndPage" class="sndpage hidden">
+  <div class="snd-sheet">
+    <div class="snd-grab"></div>
+    <button type="button" class="snd-x" id="sndBack" aria-label="Close"><svg class="ic"><use href="#i-x"/></svg></button>
+    <div class="snd-hd">
+      <div class="snd-ring"><div class="sav" id="sndAv"></div></div>
+      <div class="snd-meta">
+        <div class="snd-title"><b>Original sound</b><button type="button" class="snd-play" id="sndPlay" aria-label="Play sound"><svg class="ic"><use href="#i-play"/></svg></button></div>
+        <button type="button" class="snd-owner" id="sndOwner"><span id="sndName"></span><svg class="ic"><use href="#i-chev"/></svg></button>
+        <span class="snd-sub" id="sndSub"></span>
+        <div class="snd-wave" id="sndWave"></div>
+      </div>
+    </div>
+    <div class="snd-stats">
+      <div><b id="sndCount">-</b><span>Posts</span></div>
+      <div><b id="sndCreators">-</b><span>Creators</span></div>
+      <div><b id="sndLikes">-</b><span>Likes</span></div>
+    </div>
+    <div class="snd-lab">Videos using this sound</div>
+    <div class="snd-grid" id="sndGrid"></div>
+    <div class="snd-bar">
+      <button type="button" class="snd-story" id="sndStory"><svg class="ic"><use href="#i-plus"/></svg>Add to Story</button>
+      <button type="button" class="snd-use" id="sndUse"><svg class="ic"><use href="#i-mic"/></svg>Use sound</button>
+    </div>
+  </div>
+</div>
+
+<div id="vcSheet" class="vcs hidden">
+  <button type="button" class="vc-x" id="vcClose" aria-label="Close"><svg class="ic"><use href="#i-x"/></svg></button>
+  <div class="vcard" id="vcCard"></div>
+</div>
+
+<div id="sndPick" class="sheet hidden">
+  <div class="panel lpanel">
+    <h3>Pick a sound</h3>
+    <div id="spBody"></div>
+  </div>
+</div>
+
 <div id="toast"></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
-<script src="app.js?v=14"></script>
+<script src="app.js?v=23"></script>
 </body>
 </html>
