@@ -70,7 +70,8 @@ function checkForm(id, f) {
 }
 
 const niceError = (m = "") =>
-  /invalid login/i.test(m) ? "Wrong email or password."
+  /^blocked$/i.test(m) ? "You can't follow this person."
+  : /invalid login/i.test(m) ? "Wrong email or password."
   : /already registered|already been registered/i.test(m) ? "That email already has an account. Try logging in."
   : /database error/i.test(m) ? "That username is taken. Try another."
   : /rate limit/i.test(m) ? "Too many tries. Wait a few minutes and try again."
@@ -188,7 +189,7 @@ $("#logoutBtn").onclick = async () => {
 
 // ---------- navigation ----------
 const state = { liked: new Set(), following: new Set(), prev: "home" };
-const social = { likes: new Set(), saves: new Set(), following: new Set() };
+const social = { likes: new Set(), saves: new Set(), following: new Set(), blocked: new Set() };
 
 function go(page) {
   $$(".page").forEach((p) => p.classList.toggle("on", p.id === page));
@@ -777,7 +778,7 @@ async function openList(kind, uid) {
     .eq(followers ? "following_id" : "follower_id", uid)
     .order("created_at", { ascending: false }).limit(100);
   if (r.error) { $("#lsBody").innerHTML = `<p class="hint">${esc(socialErr(r.error))}</p>`; return; }
-  listUsers = r.data.map((x) => x.p).filter(Boolean);
+  listUsers = r.data.map((x) => x.p).filter((p) => p && !social.blocked.has(p.id));
   $("#lsBody").innerHTML = listUsers.length
     ? listUsers.map((p, i) => `<button type="button" class="lrow" data-i="${i}"><div class="lav"></div><div class="ltx"><b>${esc(p.display_name || p.username)}</b><span>@${esc(p.username)}</span></div></button>`).join("")
     : `<p class="hint">${followers ? "No followers yet." : "Not following anyone yet."}</p>`;
@@ -858,7 +859,7 @@ function clipHTML(v) {
   return `
   <article class="clip" data-id="${esc(v.id)}">
     ${media}
-    ${mine ? `<button class="more" data-act="more" aria-label="Delete or more">${icon("more")}</button>` : ""}
+    ${mine || (MIXO.user && v.uid) ? `<button class="more" data-act="more" aria-label="${mine ? "Delete or more" : "More"}">${icon("more")}</button>` : ""}
     ${isVid ? `<div class="pill"><span class="arr"><i></i><i></i></span><span class="pt">Pull down to lock 2x speed</span></div>` : ""}
     <div class="info">
       <div class="user">@${esc(v.user)}</div>
@@ -955,7 +956,7 @@ $("#feed").addEventListener("click", (e) => {
   } else if (act === "comment") { if (MIXO.user) openComments(v.id); else toast("Log in to comment"); }
   else if (act === "share") toast("Sharing comes in Stage 4");
   else if (act === "sound") toast("Sound pages come in Stage 4");
-  else if (act === "more") deletePost(v.id);
+  else if (act === "more") postMore(v);
 });
 
 // ---------- double tap: love animation ----------
@@ -1186,7 +1187,7 @@ const socialErr = (err) => /follows/.test(err.message || "") ? "Run mixo_follows
   : /post_(likes|saves|comments)/.test(err.message || "") ? "Run mixo_social.sql in Supabase first." : niceError(err.message);
 
 async function loadSocial() {
-  social.likes = new Set(); social.saves = new Set(); social.following = new Set();
+  social.likes = new Set(); social.saves = new Set(); social.following = new Set(); social.blocked = new Set();
   if (!MIXO.user || !sb) return;
   const [l, s, f] = await Promise.all([
     sb.from("post_likes").select("post_id").eq("user_id", MIXO.user.id),
@@ -1196,6 +1197,8 @@ async function loadSocial() {
   if (!f.error) social.following = new Set(f.data.map((r) => r.following_id));
   if (!l.error) social.likes = new Set(l.data.map((r) => String(r.post_id)));
   if (!s.error) social.saves = new Set(s.data.map((r) => String(r.post_id)));
+  const bl = await sb.from("blocks").select("blocked_id").eq("blocker_id", MIXO.user.id);
+  if (!bl.error) social.blocked = new Set(bl.data.map((r) => r.blocked_id));
 }
 
 function normPost(r) {
@@ -1212,7 +1215,7 @@ async function fetchPosts(types) {
   let r = await sb.from("posts").select(POST_COLS + ",post_likes(count),post_comments(count)").in("type", types).order("created_at", { ascending: false }).limit(60);
   if (r.error) r = await sb.from("posts").select(POST_COLS).in("type", types).order("created_at", { ascending: false }).limit(60);
   if (r.error) throw r.error;
-  return r.data.map(normPost);
+  return r.data.map(normPost).filter((p) => !social.blocked.has(p.uid));
 }
 async function fetchOne(id) {
   let r = await sb.from("posts").select(POST_COLS + ",post_likes(count),post_comments(count)").eq("id", id).maybeSingle();
@@ -1228,7 +1231,7 @@ function postCard(p) {
   return `<article class="pc" data-id="${esc(k)}">
     <div class="pc-av" data-pa="profile">${av}</div>
     <div class="pc-main">
-      ${mine ? `<button class="pc-more" data-pa="more" aria-label="Delete or more">${icon("more")}</button>` : ""}
+      ${mine || (MIXO.user && p.uid) ? `<button class="pc-more" data-pa="more" aria-label="${mine ? "Delete or more" : "More"}">${icon("more")}</button>` : ""}
       <div class="pc-h" data-pa="profile"><b>${esc(p.name)}</b><span>@${esc(p.user)} &middot; ${ago(p.time)}</span></div>
       ${p.text ? `<p class="pc-t">${esc(p.text)}</p>` : ""}
       ${p.type === "photo" ? `<img class="pc-img" src="${esc(p.img)}" alt="" loading="lazy">` : ""}
@@ -1304,7 +1307,7 @@ async function queryPosts(mod) {
   let r = await run(POST_COLS + ",post_likes(count),post_comments(count)");
   if (r.error) r = await run(POST_COLS);
   if (r.error) throw r.error;
-  return r.data.map(normPost);
+  return r.data.map(normPost).filter((p) => !social.blocked.has(p.uid));
 }
 
 // comments sheet (replies + pictures)
@@ -1331,6 +1334,7 @@ async function loadComments() {
   let r = await sb.from("post_comments").select(COM_BASE + ",image_url,parent_id").eq("post_id", comId).order("created_at", { ascending: true });
   if (r.error) r = await sb.from("post_comments").select(COM_BASE).eq("post_id", comId).order("created_at", { ascending: true });
   if (r.error) { comList.innerHTML = `<p class="cmt-empty">${esc(socialErr(r.error))}</p>`; return; }
+  r.data = r.data.filter((c) => !social.blocked.has(c.user_id));
   if (!r.data.length) { comList.innerHTML = '<p class="cmt-empty">No comments yet. Be the first.</p>'; return; }
   const me = MIXO.user && MIXO.user.id, owner = (postCache.get(String(comId)) || {}).uid;
   const kids = {};
@@ -1409,7 +1413,7 @@ function cardTap(e) {
   if (a === "like") toggleLike(id);
   else if (a === "save") toggleSave(id);
   else if (a === "comment") openComments(id);
-  else if (a === "more") deletePost(id);
+  else if (a === "more") postMore(postCache.get(id) || { id });
   else if (a === "profile") { const p = postCache.get(id); if (p && !(MIXO.user && p.uid === MIXO.user.id)) { $("#viewSheet").classList.add("hidden"); openCreator(p); } }
 }
 $("#viewBody").addEventListener("click", cardTap);
@@ -1583,6 +1587,7 @@ function inboxErr(e) {
   if (/request pending/i.test(m)) return "Request sent. You can write more once they accept.";
   if (/message not allowed/i.test(m)) return "You can't message this person.";
   if (/slow down/i.test(m)) return "Slow down a little.";
+  if (/dm closed/i.test(m)) return "This person isn't accepting messages.";
   if (/does not exist|schema cache|could not find the (table|function)|send_message|respond_request|mark_read/i.test(m)) return "Run mixo_inbox.sql in Supabase first.";
   return niceError(m);
 }
@@ -1601,7 +1606,7 @@ async function refreshInbox() {
   ]);
   if (cr.error) { inbox.error = inboxErr(cr.error); return renderInbox(); }
   inbox.error = "";
-  inbox.convs = cr.data || [];
+  inbox.convs = (cr.data || []).filter((c) => !social.blocked.has(otherOf(c)));
   inbox.unread = new Map();
   (ur.data || []).forEach((r) => inbox.unread.set(r.conversation_id, (inbox.unread.get(r.conversation_id) || 0) + 1));
   const need = [...new Set(inbox.convs.map(otherOf))].filter((id) => !inbox.profiles.has(id));
@@ -1837,3 +1842,169 @@ document.addEventListener("visibilitychange", () => {
   if (chat.open) loadChatMsgs();
 });
 renderInbox();
+
+
+// ============ SAFETY: block, report, privacy settings, delete account ============
+const safeErr = (e) => {
+  const m = (e && e.message) || "";
+  return /does not exist|schema cache|could not find|dm_privacy|block_user|report_content|delete_my_account|"blocks"/i.test(m)
+    ? "Run mixo_safety.sql in Supabase first." : /slow down/i.test(m) ? "Slow down a little." : niceError(m);
+};
+const isBlocked = (uid) => social.blocked.has(uid);
+function postMore(p) {
+  if (!p) return;
+  if (MIXO.user && p.uid === MIXO.user.id) deletePost(p.id);
+  else openActions({ uid: p.uid, user: p.user, postId: p.id });
+}
+
+// ----- the ... menu: report / block -----
+let actCtx = null;
+function openActions(ctx) {
+  if (!MIXO.user || !sb) return toast("Log in with a real account first.");
+  if (!ctx || !ctx.uid) return toast("Not available in the preview.");
+  if (ctx.uid === meId()) return;
+  actCtx = ctx;
+  const user = ctx.user || "user", blocked = isBlocked(ctx.uid);
+  $("#actTitle").textContent = "@" + user;
+  $("#actBody").innerHTML =
+    (ctx.postId ? `<button type="button" class="opt" data-a="rpost">${icon("flag")}Report this post</button>` : "") +
+    `<button type="button" class="opt" data-a="ruser">${icon("flag")}Report @${esc(user)}</button>` +
+    `<button type="button" class="opt danger" data-a="block">${icon("block")}${blocked ? "Unblock" : "Block"} @${esc(user)}</button>` +
+    `<button type="button" class="opt" data-a="x">Cancel</button>`;
+  $("#actSheet").classList.remove("hidden");
+}
+$("#actSheet").addEventListener("click", (e) => {
+  const s = $("#actSheet");
+  if (e.target === s) return s.classList.add("hidden");
+  const b = e.target.closest("[data-a]");
+  if (!b) return;
+  s.classList.add("hidden");
+  const c = actCtx;
+  if (!c) return;
+  const a = b.dataset.a, user = c.user || "user";
+  if (a === "rpost") openReport({ uid: c.uid, user, type: "post", id: String(c.postId) });
+  else if (a === "ruser") openReport({ uid: c.uid, user, type: "user", id: c.uid });
+  else if (a === "block") isBlocked(c.uid) ? unblockUser(c.uid, user) : blockUserFlow(c.uid, user);
+});
+$("#cMore").onclick = () => openActions({ uid: $("#cFollow").dataset.uid, user: $("#cUser").textContent.replace("@", "") });
+$("#chatMore").onclick = () => openActions({ uid: chat.uid, user: (chat.user || {}).username });
+
+async function blockUserFlow(uid, user) {
+  const ok = await confirmBox("Block @" + user + "?", "They can't message or follow you, and you won't see their posts. They aren't told.", "Block");
+  if (!ok) return;
+  const r = await sb.rpc("block_user", { p_user: uid });
+  if (r.error) return toast(safeErr(r.error));
+  social.blocked.add(uid);
+  social.following.delete(uid);
+  videos = videos.filter((v) => v.uid !== uid);
+  $$(".clip[data-id], .pc[data-id], .pt[data-id]").forEach((el) => {
+    const p = postCache.get(el.dataset.id);
+    if (p && p.uid === uid) el.remove();
+  });
+  if (chat.open && chat.uid === uid) closeChat();
+  if ($("#creator").classList.contains("on") && $("#cFollow").dataset.uid === uid) go(state.prev && state.prev !== "creator" ? state.prev : "home");
+  if (!$$("#feed .clip").length) $("#feed").innerHTML = emptyFeed("No posts yet.<br>Tap + to post the first one.");
+  refreshInbox();
+  toast("Blocked @" + user);
+}
+async function unblockUser(uid, user) {
+  const r = await sb.rpc("unblock_user", { p_user: uid });
+  if (r.error) return toast(safeErr(r.error));
+  social.blocked.delete(uid);
+  toast("Unblocked @" + user);
+  refreshInbox();
+  renderFeed();
+}
+
+// ----- report -----
+const REASONS = ["Spam", "Harassment or bullying", "Nudity or sexual content", "Violence or hate", "Scam or fake account", "Something else"];
+let rep = null, repReason = "";
+function openReport(ctx) {
+  rep = ctx; repReason = "";
+  $("#repWho").textContent = ctx.type === "post" ? "Report a post by @" + ctx.user : "Report @" + ctx.user;
+  $("#repReasons").innerHTML = REASONS.map((r) => `<button type="button" data-r="${esc(r)}">${esc(r)}</button>`).join("");
+  $("#repDetails").value = "";
+  $("#repMsg").textContent = "";
+  $("#reportSheet").classList.remove("hidden");
+}
+$("#repReasons").addEventListener("click", (e) => {
+  const b = e.target.closest("button");
+  if (!b) return;
+  repReason = b.dataset.r;
+  $$("#repReasons button").forEach((x) => x.classList.toggle("on", x === b));
+});
+$("#repCancel").onclick = () => $("#reportSheet").classList.add("hidden");
+$("#reportSheet").addEventListener("click", (e) => { if (e.target.id === "reportSheet") $("#reportSheet").classList.add("hidden"); });
+$("#repSend").onclick = async () => {
+  if (!rep) return;
+  if (!repReason) { $("#repMsg").textContent = "Pick a reason."; return; }
+  $("#repMsg").textContent = "Sending...";
+  const r = await sb.rpc("report_content", { p_user: rep.uid, p_type: rep.type, p_id: rep.id, p_reason: repReason, p_details: $("#repDetails").value.trim() });
+  if (r.error) { $("#repMsg").textContent = safeErr(r.error); return; }
+  $("#reportSheet").classList.add("hidden");
+  toast("Thanks. We'll review your report.");
+};
+
+// ----- settings: who can message me, blocked list, delete account -----
+function paintDm() {
+  const v = (MIXO.profile && MIXO.profile.dm_privacy) || "everyone";
+  $$("#dmSeg button").forEach((b) => b.classList.toggle("on", b.dataset.v === v));
+}
+$("#setBtn").onclick = () => {
+  if (!MIXO.user) return toast("Log in with a real account first.");
+  paintDm();
+  $("#setSheet").classList.remove("hidden");
+};
+$("#setClose").onclick = () => $("#setSheet").classList.add("hidden");
+$("#setSheet").addEventListener("click", (e) => { if (e.target.id === "setSheet") $("#setSheet").classList.add("hidden"); });
+$("#dmSeg").addEventListener("click", async (e) => {
+  const b = e.target.closest("button");
+  if (!b || !sb || !MIXO.user) return;
+  const r = await sb.from("profiles").update({ dm_privacy: b.dataset.v }).eq("id", meId()).select().single();
+  if (r.error) return toast(safeErr(r.error));
+  MIXO.profile = r.data;
+  paintDm();
+  toast("Saved");
+});
+
+$("#setBlocked").onclick = async () => {
+  $("#setSheet").classList.add("hidden");
+  const body = $("#blkBody");
+  body.innerHTML = '<p class="hint">Loading...</p>';
+  $("#blkSheet").classList.remove("hidden");
+  const r = await sb.from("blocks").select("blocked_id").eq("blocker_id", meId());
+  if (r.error) { body.innerHTML = `<p class="hint">${esc(safeErr(r.error))}</p>`; return; }
+  const ids = r.data.map((x) => x.blocked_id);
+  if (!ids.length) { body.innerHTML = '<p class="hint">You haven\'t blocked anyone.</p>'; return; }
+  const pr = await sb.from("profiles").select("id,username,display_name,avatar_url").in("id", ids);
+  const list = pr.data || [];
+  body.innerHTML = list.map((p) => `<div class="lrow"><div class="lav"></div><div class="ltx"><b>${esc(p.display_name || p.username)}</b><span>@${esc(p.username)}</span></div><button type="button" class="pbtn line" data-u="${esc(p.id)}" data-n="${esc(p.username)}">Unblock</button></div>`).join("");
+  $$("#blkBody .lav").forEach((el, i) => setAv(el, list[i].avatar_url, list[i].username));
+};
+$("#blkBody").addEventListener("click", async (e) => {
+  const b = e.target.closest("[data-u]");
+  if (!b) return;
+  await unblockUser(b.dataset.u, b.dataset.n);
+  if (!isBlocked(b.dataset.u)) {
+    b.closest(".lrow").remove();
+    if (!$("#blkBody .lrow")) $("#blkBody").innerHTML = '<p class="hint">You haven\'t blocked anyone.</p>';
+  }
+});
+$("#blkSheet").addEventListener("click", (e) => { if (e.target.id === "blkSheet") $("#blkSheet").classList.add("hidden"); });
+
+$("#setDelete").onclick = async () => {
+  $("#setSheet").classList.add("hidden");
+  if (!(await confirmBox("Delete account?", "Your profile, posts, comments, messages and followers are deleted for good. This can't be undone.", "Delete"))) return;
+  if (!(await confirmBox("Really delete?", "Last chance. Everything will be gone.", "Yes, delete"))) return;
+  toast("Deleting...");
+  try { // remove my uploaded videos and pictures first
+    for (const bucket of ["videos", "avatars"]) {
+      const ls = await sb.storage.from(bucket).list(meId(), { limit: 1000 });
+      if (ls.data && ls.data.length) await sb.storage.from(bucket).remove(ls.data.map((f) => meId() + "/" + f.name));
+    }
+  } catch (e) {}
+  const r = await sb.rpc("delete_my_account");
+  if (r.error) return toast(safeErr(r.error));
+  await $("#logoutBtn").onclick();
+  toast("Your account was deleted.");
+};

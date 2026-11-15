@@ -466,3 +466,19 @@ main{position:fixed;inset:0;bottom:calc(var(--navh) + var(--bot))}
 .ch-no{border:1.5px solid rgba(255,90,120,.6);color:#ff8aa0}
 .ch-yes{background:linear-gradient(90deg,var(--blue),var(--cyan));color:#fff}
 .hint.c{text-align:center;margin:30px 10px}
+
+/* ===== safety ===== */
+.back.right{left:auto;right:14px}
+.moreic{fill:currentColor;stroke:currentColor}
+.ch-back .moreic{width:22px;height:22px}
+.opt.danger{color:#ff8aa0}
+.opt.danger .ic{stroke:#ff8aa0}
+#actBody{display:grid;gap:10px}
+.rsn{display:grid;gap:8px;margin:8px 0 12px}
+.rsn button{padding:13px 16px;border-radius:14px;background:var(--glass);font-weight:700;text-align:left;border:1.5px solid transparent}
+.rsn button.on{border-color:var(--cyan);background:rgba(25,211,255,.12)}
+.rtxt{width:100%;resize:none;padding:12px 14px;border-radius:16px;border:1.5px solid rgba(90,160,255,.4);background:rgba(255,255,255,.07);color:#fff;font:inherit;font-size:16px;outline:none}
+.dmseg{margin:6px 0 14px}
+.dmseg button{font-size:13px}
+#setSheet .opt{margin-top:10px;width:100%}
+.lrow .pbtn{flex:none;width:auto;margin-left:auto;padding:8px 16px}
