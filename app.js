@@ -884,7 +884,6 @@ function clipHTML(v) {
       <button data-act="comment">${icon("comment")}<span>${fmt(v.comments)}</span></button>
       <button data-act="save" class="${social.saves.has(String(v.id)) ? "on" : ""}">${icon("save")}<span>Save</span></button>
       <button data-act="share">${icon("share")}<span>Share</span></button>
-      ${type === "video" ? `<div class="disc" data-act="sound">${icon("music")}</div>` : ""}
     </div>
   </article>`;
 }
@@ -964,7 +963,6 @@ $("#feed").addEventListener("click", (e) => {
     toggleSave(v.id);
   } else if (act === "comment") { if (MIXO.user) openComments(v.id); else toast("Log in to comment"); }
   else if (act === "share") sharePost(v.id);
-  else if (act === "sound") toast("Sound pages come in Stage 4");
   else if (act === "more") postMore(v);
 });
 

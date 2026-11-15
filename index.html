@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#06123a">
 <title>MIXO</title>
-<link rel="stylesheet" href="style.css?v=22">
+<link rel="stylesheet" href="style.css?v=23">
 </head>
 <body>
 
@@ -270,7 +270,7 @@
         <video id="postVid" class="hidden" muted loop playsinline></video>
         <div class="vph"><svg class="ic big"><use href="#i-video"/></svg><span>Choose a video</span><small>Up to 30 seconds</small></div>
       </div>
-      <input type="file" id="postFile" accept="video/*" hidden>
+      <input type="file" id="postFile" accept="video/*" multiple hidden>
       <label>Caption</label>
       <textarea name="caption" maxlength="150" rows="2" placeholder="Say something about your video"></textarea>
       <p id="postMsg" class="msg"></p>
@@ -472,11 +472,11 @@
     <button type="button" class="pbtn line" id="camErrClose">Close</button>
   </div>
   <input type="file" id="camNative" accept="video/*" capture hidden>
-  <input type="file" id="vrFile" accept="video/*" hidden>
+  <input type="file" id="vrFile" accept="video/*" multiple hidden>
 </div>
 
 <div id="toast"></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
-<script src="app.js?v=20"></script>
+<script src="app.js?v=21"></script>
 </body>
 </html>
