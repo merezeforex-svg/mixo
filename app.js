@@ -200,6 +200,7 @@ function go(page) {
   if (page === "profile") loadMyPosts();
   if (page === "explore") loadExplore();
   if (page === "inbox") refreshInbox();
+  if (page === "connect") connectEnter(); else connectLeave();
 }
 $$("#nav [data-page]").forEach((b) => (b.onclick = () => go(b.dataset.page)));
 
@@ -648,7 +649,6 @@ $("#vcCard").addEventListener("click", (e) => {
 $("#sndStory").onclick = () => toast("Stories are coming soon");
 
 // ---------- connect + profile ----------
-$("#findBtn").onclick = () => toast("Real voice matching goes live in Stage 7");
 // ---------- edit profile ----------
 
 // ---------- country: found automatically, locked, or Earth ----------
@@ -1880,7 +1880,8 @@ $("#inList").addEventListener("click", (e) => {
 });
 
 // ----- chat screen -----
-const CALLS_READY = false;
+const CALLS_READY = true;
+let callCh = null;
 const REACTS = ["❤️", "😂", "😮", "😢", "🔥", "👍"];
 const signed = new Map();
 const vr = { rec: null, chunks: [], stream: null, t0: 0, tick: 0, send: false };
@@ -1893,7 +1894,12 @@ const syncSend = () => $("#chatSend").classList.toggle("mic", !($("#chatInput").
 const iAmLocked = () => { const c = chat.conv, me = meId(); return !!(c && c.initiator === me && c.status !== "accepted" && chat.msgs.some((m) => m.sender_id === me)); };
 const showLimit = () => $("#limitModal").classList.remove("hidden");
 $("#limitOk").onclick = () => $("#limitModal").classList.add("hidden");
-const paintOnline = () => { const on = !!(chat.open && online.has(chat.uid)); $("#chatDot").classList.toggle("hidden", !on); $("#chatStat").textContent = on ? " · Online" : ""; };
+const paintOnline = () => {
+  const on = !!(chat.open && online.has(chat.uid));
+  $("#chatDot").classList.toggle("hidden", !on);
+  $("#chatStat").textContent = on ? " · Online" : "";
+  $("#chatCall").classList.toggle("off", !(on && chat.conv && chat.conv.status === "accepted"));
+};
 
 async function signMedia(list) {
   const need = [...new Set(list.filter((m) => m.media_url && !signed.has(m.media_url)).map((m) => m.media_url))];
@@ -2003,6 +2009,7 @@ function renderChat(stick) {
   const incoming = !!(chat.conv && isReq(chat.conv));
   $("#chatReq").classList.toggle("hidden", !incoming);
   $("#chatForm").classList.toggle("hidden", incoming);
+  paintOnline();
 }
 
 // ----- sending: text, photos, voice notes -----
@@ -2168,9 +2175,175 @@ $("#reactBar").addEventListener("click", (e) => {
 });
 document.addEventListener("pointerdown", (e) => { if (!e.target.closest("#reactBar")) hideReactBar(); }, true);
 
+// ============ VOICE CALLS: WebRTC audio, signalling saved in the database ============
+// To make calls also connect on mobile data, paste your free TURN servers here
+// (metered.ca -> TURN Server -> Add Credential -> Show ICE Servers Array).
+const TURN_SERVERS = [];
+const ICE = { iceServers: [{ urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"] }].concat(TURN_SERVERS) };
+const call = { id: null, peer: null, pc: null, stream: null, role: "", state: "idle", t0: 0, tick: 0, ring: 0, queue: [], seen: new Set() };
+const callAudio = $("#callAudio");
+
+function callShow(mode, peerId) {
+  const p = inbox.profiles.get(peerId) || {};
+  setAv($("#clAv"), p.avatar_url, p.username);
+  $("#clName").textContent = p.display_name || p.username || "User";
+  $("#callUI").dataset.mode = mode;
+  $("#callUI").classList.remove("hidden");
+  cxRetrack();
+}
+const callStat = (t) => { $("#clStat").textContent = t; };
+const callErr = (e) => (/calls|call_signals|schema cache/i.test((e && e.message) || "") ? "Run mixo_calls.sql in Supabase first." : "Couldn't start the call.");
+const sendSignal = (kind, data) => sb.from("call_signals").insert({ call_id: call.id, kind, data });
+const micOpts = { audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } };
+
+function callCleanup() {
+  clearTimeout(call.ring);
+  clearInterval(call.tick);
+  if (call.pc) { try { call.pc.close(); } catch (e) {} }
+  if (call.stream) call.stream.getTracks().forEach((t) => t.stop());
+  callAudio.srcObject = null;
+  Object.assign(call, { id: null, peer: null, pc: null, stream: null, role: "", state: "idle", queue: [], seen: new Set() });
+  $("#callUI").classList.add("hidden");
+  $("#clMute").classList.remove("on");
+  cxRetrack();
+}
+async function callEnd(status) {
+  const id = call.id;
+  callCleanup();
+  if (id && sb) await sb.from("calls").update({ status, ended_at: new Date().toISOString() }).eq("id", id);
+}
+
+function callLive() {
+  if (call.state === "live") return;
+  clearTimeout(call.ring);
+  call.state = "live";
+  call.t0 = Date.now();
+  $("#callUI").dataset.mode = "live";
+  call.tick = setInterval(() => callStat(fmtDur((Date.now() - call.t0) / 1000)), 500);
+}
+function makePc() {
+  const pc = new RTCPeerConnection(ICE);
+  call.pc = pc;
+  call.stream.getTracks().forEach((t) => pc.addTrack(t, call.stream));
+  pc.onicecandidate = (e) => { if (e.candidate) sendSignal("ice", e.candidate.toJSON()); };
+  pc.ontrack = (e) => { callAudio.srcObject = e.streams[0]; callAudio.play().catch(() => {}); };
+  pc.onconnectionstatechange = () => {
+    if (call.pc !== pc) return;
+    if (pc.connectionState === "connected") callLive();
+    else if (pc.connectionState === "failed") { toast("The call couldn't connect. Mobile networks may need a TURN server."); callEnd("ended"); }
+    else if (pc.connectionState === "disconnected") setTimeout(() => { if (call.pc === pc && pc.connectionState === "disconnected") callEnd("ended"); }, 6000);
+  };
+}
+async function applySignal(s) {
+  if (!call.pc || call.seen.has(s.id) || s.sender_id === meId()) return;
+  call.seen.add(s.id);
+  try {
+    if (s.kind === "ice") {
+      if (call.pc.remoteDescription) await call.pc.addIceCandidate(s.data); else call.queue.push(s.data);
+    } else {
+      await call.pc.setRemoteDescription(s.data);
+      for (const c of call.queue.splice(0)) await call.pc.addIceCandidate(c);
+    }
+  } catch (e) {}
+}
+
+async function startCall() {
+  if (!sb || !MIXO.user) return;
+  if (call.state !== "idle") return toast("You're already in a call.");
+  const c = chat.conv;
+  if (!c || c.status !== "accepted") return toast("You can call once your message request is accepted.");
+  if (!online.has(chat.uid)) return toast("They're offline right now.");
+  if (!window.RTCPeerConnection || !navigator.mediaDevices) return toast("Calls aren't supported in this browser.");
+  const peer = chat.uid;
+  call.state = "starting";
+  try { call.stream = await navigator.mediaDevices.getUserMedia(micOpts); }
+  catch (e) { call.state = "idle"; return toast("Allow the microphone to make calls."); }
+  const ins = await sb.from("calls").insert({ callee_id: peer }).select().single();
+  if (ins.error) { callCleanup(); return toast(callErr(ins.error)); }
+  call.id = ins.data.id;
+  call.peer = peer;
+  call.role = "caller";
+  call.state = "ringing";
+  callShow("out", peer);
+  callStat("Calling...");
+  makePc();
+  try {
+    const offer = await call.pc.createOffer();
+    await call.pc.setLocalDescription(offer);
+    await sendSignal("offer", { type: offer.type, sdp: offer.sdp });
+  } catch (e) { toast("Couldn't start the call."); return callEnd("ended"); }
+  call.ring = setTimeout(() => { if (call.state === "ringing") { toast("No answer."); callEnd("missed"); } }, 45000);
+}
+
+async function onCallInsert(p) {
+  const row = p.new;
+  if (!row || row.callee_id !== meId() || row.status !== "ringing") return;
+  if (Date.now() - new Date(row.created_at).getTime() > 45000) return;
+  if (call.state !== "idle") { sb.from("calls").update({ status: "busy" }).eq("id", row.id); return; }
+  call.state = "incoming";
+  call.id = row.id;
+  call.peer = row.caller_id;
+  call.role = "callee";
+  if (!inbox.profiles.has(row.caller_id)) {
+    const r = await sb.from("profiles").select("id,username,display_name,avatar_url").eq("id", row.caller_id).maybeSingle();
+    if (r.data) inbox.profiles.set(r.data.id, r.data);
+  }
+  if (call.id !== row.id) return;
+  callShow("in", row.caller_id);
+  callStat("Incoming voice call");
+  if (navigator.vibrate) navigator.vibrate([300, 200, 300, 200, 300]);
+  call.ring = setTimeout(() => { if (call.state === "incoming") callCleanup(); }, 45000);
+}
+function onCallUpdate(p) {
+  const row = p.new;
+  if (!row || row.id !== call.id) return;
+  if (["declined", "busy", "ended", "missed"].includes(row.status)) {
+    const live = call.state === "live";
+    if (row.status === "declined") toast("Call declined.");
+    else if (row.status === "busy") toast("They're on another call.");
+    else if (row.status === "ended" && live) toast("Call ended.");
+    callCleanup();
+  } else if (row.status === "active" && call.role === "caller" && call.state !== "live") callStat("Connecting...");
+}
+function onSignal(p) {
+  const s = p.new;
+  if (s && s.call_id === call.id) applySignal(s);
+}
+
+$("#clAccept").onclick = async () => {
+  if (call.state !== "incoming") return;
+  clearTimeout(call.ring);
+  call.state = "answering";
+  try { call.stream = await navigator.mediaDevices.getUserMedia(micOpts); }
+  catch (e) { toast("Allow the microphone to answer."); return callEnd("declined"); }
+  makePc();
+  const sigs = await sb.from("call_signals").select("*").eq("call_id", call.id).order("id");
+  const rows = sigs.data || [];
+  const offer = rows.find((s) => s.kind === "offer");
+  if (!offer) { toast("The call ended."); return callCleanup(); }
+  await applySignal(offer);
+  for (const s of rows) if (s.kind === "ice") await applySignal(s);
+  try {
+    const ans = await call.pc.createAnswer();
+    await call.pc.setLocalDescription(ans);
+    await sendSignal("answer", { type: ans.type, sdp: ans.sdp });
+  } catch (e) { toast("Couldn't answer the call."); return callEnd("ended"); }
+  await sb.from("calls").update({ status: "active", answered_at: new Date().toISOString() }).eq("id", call.id);
+  call.state = "connecting";
+  $("#callUI").dataset.mode = "live";
+  callStat("Connecting...");
+};
+$("#clDecline").onclick = () => callEnd("declined");
+$("#clHang").onclick = () => callEnd(call.state === "ringing" ? "missed" : "ended");
+$("#clMute").onclick = () => {
+  if (!call.stream) return;
+  const on = $("#clMute").classList.toggle("on");
+  call.stream.getAudioTracks().forEach((t) => { t.enabled = !on; });
+};
+
 // ----- header buttons -----
 $("#chatBack").onclick = closeChat;
-$("#chatCall").onclick = () => toast(CALLS_READY ? "Calling..." : "Calls aren't available yet.");
+$("#chatCall").onclick = startCall;
 $("#chatWho").onclick = () => {
   const p = chat.user;
   if (!p) return;
@@ -2256,6 +2429,11 @@ function startInbox() {
   presCh = sb.channel("mixo-online", { config: { presence: { key: meId() } } });
   presCh.on("presence", { event: "sync" }, () => { online = new Set(Object.keys(presCh.presenceState())); paintOnline(); })
     .subscribe(async (s) => { if (s === "SUBSCRIBED") await presCh.track({ at: Date.now() }); });
+  callCh = sb.channel("calls-" + meId())
+    .on("postgres_changes", { event: "INSERT", schema: "public", table: "calls" }, onCallInsert)
+    .on("postgres_changes", { event: "UPDATE", schema: "public", table: "calls" }, onCallUpdate)
+    .on("postgres_changes", { event: "INSERT", schema: "public", table: "call_signals" }, onSignal)
+    .subscribe();
   pollTimer = setInterval(() => {
     if (rtOK || document.hidden) return;
     refreshInbox();
@@ -2263,8 +2441,10 @@ function startInbox() {
   }, 8000);
 }
 function stopInbox() {
-  if (sb) { if (rtChannel) sb.removeChannel(rtChannel); if (presCh) sb.removeChannel(presCh); }
-  rtChannel = null; presCh = null; rtOK = false; online = new Set();
+  connectLeave();
+  if (call.state !== "idle") callEnd("ended");
+  if (sb) { if (rtChannel) sb.removeChannel(rtChannel); if (presCh) sb.removeChannel(presCh); if (callCh) sb.removeChannel(callCh); }
+  rtChannel = null; presCh = null; callCh = null; rtOK = false; online = new Set();
   clearInterval(pollTimer);
   inbox.convs = []; inbox.unread = new Map(); inbox.loaded = false; inbox.error = ""; inbox.tab = "msg";
   closeChat();
@@ -2562,161 +2742,261 @@ $("#cGrid").addEventListener("click", (e) => {
   if (p) openVidCard(p.id);
 });
 
-// ============ VOICE CALLS (WebRTC; the "ring" travels over Supabase Realtime) ============
-// To help calls connect on strict mobile networks, add a TURN server here later.
-const ICE = [
-  { urls: "stun:stun.l.google.com:19302" },
-  // free public relay so calls can connect on mobile data; replace with your own TURN account for best reliability
-  { urls: ["turn:openrelay.metered.ca:80", "turn:openrelay.metered.ca:443", "turns:openrelay.metered.ca:443?transport=tcp"], username: "openrelayproject", credential: "openrelayproject" },
+
+// ============ CONNECT: meet someone new by voice + MIXO Premium ============
+// Payments: paste your Stripe Payment Links here (one per plan). Until then the plan screen shows
+// "Payments aren't connected yet". Premium itself is stored in the premium_users table (see mixo_connect.sql).
+var PAY_LINKS = { weekly: "", monthly: "", yearly: "" };
+var PLANS = [
+  { id: "weekly", name: "Weekly", price: 5, per: "week", note: "Try it out" },
+  { id: "monthly", name: "Monthly", price: 19, per: "month", note: "Billed every month", badge: "MOST POPULAR" },
+  { id: "yearly", name: "Yearly", price: 230, per: "year", note: "Works out at $19.17 / month" },
 ];
-const call = { state: "idle", peer: null, pc: null, stream: null, offer: null, queue: [], answered: false, t0: 0, tick: 0, ring: 0, to: 0 };
-let callCh = null, actx = null;
-const sigCh = new Map();
+var PL = { sel: "monthly" };
 
-async function sigTo(uid, p) {
-  const { type, ...rest } = p;
-  const r = await sb.rpc("send_signal", { p_to: uid, p_kind: type, p_payload: rest });
-  if (r.error && type === "offer") {
-    callEnd(/does not exist|schema cache|could not find/i.test(r.error.message || "") ? "Run mixo_calls.sql in Supabase first." : "Couldn't start the call.", false);
-  }
-}
-function ringStart(out) {
-  ringStop();
+// every country name (English), used by the filter and for flags
+var CC = (function () {
+  const m = new Map();
   try {
-    actx = actx || new (window.AudioContext || window.webkitAudioContext)();
-    const beep = () => { const o = actx.createOscillator(), g = actx.createGain(); o.frequency.value = out ? 425 : 520; g.gain.value = 0.06; o.connect(g); g.connect(actx.destination); o.start(); o.stop(actx.currentTime + 0.4); };
-    beep(); call.ring = setInterval(beep, 2000);
+    const dn = new Intl.DisplayNames(["en"], { type: "region", fallback: "none" });
+    const A = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    for (const a of A) for (const b of A) {
+      const n = dn.of(a + b);
+      if (n && n !== a + b && !/Unknown|European Union|United Nations|Eurozone|Pseudo/i.test(n)) m.set(n, a + b);
+    }
   } catch (e) {}
-}
-function ringStop() { clearInterval(call.ring); call.ring = 0; }
-function showCall(status, incoming) {
-  const p = call.peer || {};
-  $("#callName").textContent = p.display_name || p.username || "User";
-  setAv($("#callAv"), p.avatar_url, p.username);
-  $("#callStatus").textContent = status;
-  $("#callAcceptW").classList.toggle("hidden", !incoming);
-  $("#callMuteW").classList.toggle("hidden", !!incoming);
-  $("#callSpkW").classList.toggle("hidden", !!incoming);
-  $("#callScreen").classList.remove("hidden");
-}
-function callCleanup(msg) {
-  clearTimeout(call.to); clearInterval(call.tick); ringStop();
-  if (call.pc) { call.pc.onicecandidate = call.pc.ontrack = call.pc.onconnectionstatechange = null; call.pc.close(); }
-  if (call.stream) call.stream.getTracks().forEach((t) => t.stop());
-  Object.assign(call, { state: "idle", peer: null, pc: null, stream: null, offer: null, queue: [], answered: false, t0: 0 });
-  $("#callAudio").srcObject = null;
-  $("#callMute").classList.remove("on"); $("#callSpk").classList.remove("on");
-  $("#callScreen").classList.add("hidden");
-  if (msg) toast(msg);
-}
-function callEnd(msg, tell) {
-  if (tell !== false && call.peer) sigTo(call.peer.id, { type: "end" });
-  callCleanup(msg);
-}
-const getMic = () => navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
-function makePC() {
-  const pc = new RTCPeerConnection({ iceServers: ICE });
-  call.pc = pc;
-  call.stream.getTracks().forEach((t) => pc.addTrack(t, call.stream));
-  pc.ontrack = (e) => { const a = $("#callAudio"); a.srcObject = e.streams[0]; a.play().catch(() => {}); };
-  pc.onicecandidate = (e) => { if (e.candidate && call.peer) sigTo(call.peer.id, { type: "ice", c: e.candidate.toJSON() }); };
-  pc.onconnectionstatechange = () => {
-    const s = pc.connectionState;
-    if (s === "connected") {
-      call.state = "on"; ringStop(); clearTimeout(call.to);
-      call.t0 = Date.now(); $("#callStatus").textContent = "0:00";
-      call.tick = setInterval(() => { $("#callStatus").textContent = fmtDur((Date.now() - call.t0) / 1000); }, 500);
-    } else if (s === "failed") callEnd("Call failed. Check your connection.");
-    else if (s === "disconnected") call.to = setTimeout(() => { if (call.pc === pc && pc.connectionState !== "connected") callEnd("Call lost"); }, 6000);
-  };
-}
-const flushIce = () => call.queue.splice(0).forEach((c) => call.pc.addIceCandidate(c).catch(() => {}));
+  return m;
+})();
+const flagOf = (name) => { const c = CC.get(name); return c ? String.fromCodePoint(...[...c].map((ch) => 127397 + ch.charCodeAt(0))) : ""; };
 
-async function callStart() {
-  if (!sb || !MIXO.user || !chat.open || !chat.uid || call.state !== "idle") return;
-  if (!window.RTCPeerConnection) return toast("Calls aren't supported on this browser.");
-  if (!chat.conv || chat.conv.status !== "accepted") return toast("You can call once they accept your request.");
-  if (isBlocked(chat.uid)) return;
-  if (!online.has(chat.uid)) return toast("They're offline right now.");
-  try { call.stream = await getMic(); } catch (e) { return toast("Allow the microphone to make calls."); }
-  call.peer = { ...(chat.user || {}), id: chat.uid };
-  call.state = "out";
-  showCall("Calling...");
-  ringStart(true);
-  makePC();
-  const o = await call.pc.createOffer();
-  await call.pc.setLocalDescription(o);
-  sigTo(chat.uid, { type: "offer", sdp: o.sdp });
-  call.to = setTimeout(() => callEnd("No answer"), 45000);
+function cxLoadFilt() {
+  try {
+    const j = JSON.parse(localStorage.getItem("mixo_cx_filter") || "null");
+    if (j) return { countries: Array.isArray(j.countries) ? j.countries : [], hideEarth: !!j.hideEarth };
+  } catch (e) {}
+  return { countries: [], hideEarth: false };
 }
-async function onSig(p) {
-  if (!p || !p.from || isBlocked(p.from)) return;
-  if (p.type === "offer") {
-    if (!inbox.convs.some((c) => otherOf(c) === p.from && c.status === "accepted")) return;
-    if (call.state !== "idle") return sigTo(p.from, { type: "busy" });
-    call.state = "in"; call.offer = p.sdp;
-    call.peer = { ...(inbox.profiles.get(p.from) || {}), id: p.from };
-    showCall("Incoming call", true);
-    ringStart(false);
-    call.to = setTimeout(() => callEnd("Missed call"), 45000);
-    return;
-  }
-  if (!call.peer || call.peer.id !== p.from) return;
-  if (p.type === "answer" && call.pc) {
-    $("#callStatus").textContent = "Connecting...";
-    ringStop(); clearTimeout(call.to);
-    call.to = setTimeout(() => { if (call.state !== "on") callEnd("Couldn't connect. Try Wi-Fi."); }, 25000);
-    await call.pc.setRemoteDescription({ type: "answer", sdp: p.sdp }); flushIce();
-  }
-  else if (p.type === "ice") { if (call.pc && call.pc.remoteDescription) call.pc.addIceCandidate(p.c).catch(() => {}); else call.queue.push(p.c); }
-  else if (p.type === "end") callEnd("Call ended", false);
-  else if (p.type === "decline") callEnd("Call declined", false);
-  else if (p.type === "busy") callEnd("They're on another call", false);
-}
-$("#callAccept").onclick = async () => {
-  if (call.state !== "in" || call.answered) return;
-  call.answered = true; ringStop(); clearTimeout(call.to);
-  try { call.stream = await getMic(); }
-  catch (e) { sigTo(call.peer.id, { type: "decline" }); return callCleanup("Allow the microphone to answer calls."); }
-  makePC();
-  await call.pc.setRemoteDescription({ type: "offer", sdp: call.offer });
-  flushIce();
-  const a = await call.pc.createAnswer();
-  await call.pc.setLocalDescription(a);
-  sigTo(call.peer.id, { type: "answer", sdp: a.sdp });
-  showCall("Connecting...", false);
-  call.to = setTimeout(() => { if (call.state !== "on") callEnd("Couldn't connect. Try Wi-Fi."); }, 25000);
-};
-$("#callEnd").onclick = () => {
-  if (call.state === "in" && !call.answered) { sigTo(call.peer.id, { type: "decline" }); callCleanup(); }
-  else callEnd();
-};
-$("#callMute").onclick = () => {
-  const t = call.stream && call.stream.getAudioTracks()[0];
-  if (!t) return;
-  t.enabled = !t.enabled;
-  $("#callMute").classList.toggle("on", !t.enabled);
-};
-$("#callSpk").onclick = async () => {
-  const b = $("#callSpk"), on = !b.classList.contains("on");
-  b.classList.toggle("on", on);
-  const a = $("#callAudio");
-  if (a.setSinkId) { try { await a.setSinkId("default"); } catch (e) {} }
-};
-$("#chatCall").onclick = callStart;
+var CX = { ch: null, all: [], pool: [], cur: null, filt: cxLoadFilt(), premium: false, until: null, quota: null, busy: false, tick: 0 };
 
-// listen for calls while logged in (starts and stops by itself)
-setInterval(() => {
-  if (MIXO.user && sb && !callCh) {
-    callCh = sb.channel("calls-" + MIXO.user.id)
-      .on("postgres_changes", { event: "INSERT", schema: "public", table: "call_signals" }, (m) => {
-        const r = m.new;
-        if (!r || r.to_id !== MIXO.user.id || Date.now() - new Date(r.created_at) > 60000) return;
-        onSig({ ...(r.payload || {}), type: r.kind, from: r.from_id });
-      }).subscribe();
-  } else if (!MIXO.user && callCh) {
-    sb.removeChannel(callCh); callCh = null;
-    sigCh.forEach((c) => sb.removeChannel(c)); sigCh.clear();
-    callCleanup();
+const cxLimit = () => (CX.quota ? CX.quota.limit : CX.premium ? 20 : 10);
+function cxWait(iso) {
+  const ms = new Date(iso) - Date.now();
+  if (!(ms > 0)) return "";
+  const h = Math.floor(ms / 3600000), m = Math.ceil((ms % 3600000) / 60000);
+  return h ? h + "h " + m + "m" : m + "m";
+}
+function cxRetrack() { if (CX && CX.ch) cxTrack(); }
+function cxTrack() {
+  const p = MIXO.profile || {};
+  return CX.ch && CX.ch.track({ id: meId(), u: p.username || "", n: p.display_name || p.username || "", a: p.avatar_url || "", c: p.country || "", busy: call.state !== "idle" });
+}
+
+async function loadPremium() {
+  CX.premium = false; CX.until = null;
+  if (sb && MIXO.user) {
+    const r = await sb.from("premium_users").select("plan,premium_until").eq("user_id", meId()).maybeSingle();
+    if (r.data && new Date(r.data.premium_until) > new Date()) { CX.premium = true; CX.until = r.data.premium_until; }
   }
-}, 1000);
+  cxApply();
+}
+async function loadQuota() {
+  if (!sb || !MIXO.user) return;
+  const r = await sb.rpc("connect_quota");
+  CX.quota = r.error ? null : r.data;
+  cxRenderQuota();
+}
+
+function connectEnter() {
+  if (!CX) return;
+  cxRender();
+  if (!sb || !MIXO.user) return;
+  loadPremium();
+  loadQuota();
+  clearInterval(CX.tick);
+  CX.tick = setInterval(() => { if (CX.quota && CX.quota.resets_at && new Date(CX.quota.resets_at) < new Date()) loadQuota(); else cxRenderQuota(); }, 30000);
+  if (CX.ch) return;
+  CX.ch = sb.channel("mixo-connect", { config: { presence: { key: meId() } } });
+  CX.ch.on("presence", { event: "sync" }, cxSync).subscribe(async (s) => { if (s === "SUBSCRIBED") await cxTrack(); });
+}
+function connectLeave() {
+  if (!CX) return;
+  clearInterval(CX.tick);
+  if (CX.ch && sb) { try { sb.removeChannel(CX.ch); } catch (e) {} }
+  CX.ch = null; CX.all = []; CX.pool = []; CX.cur = null;
+}
+
+function cxSync() {
+  if (!CX.ch) return;
+  const st = CX.ch.presenceState();
+  CX.all = Object.keys(st).filter((k) => k !== meId()).map((k) => st[k][0])
+    .filter((m) => m && m.id && !m.busy && !social.blocked.has(m.id));
+  cxApply();
+}
+function cxApply() {
+  const f = CX.premium ? CX.filt : { countries: [], hideEarth: false };
+  CX.pool = CX.all.filter((m) => (!f.hideEarth || m.c !== "Earth") && (!f.countries.length || f.countries.includes(m.c)));
+  if (!CX.cur || !CX.pool.some((m) => m.id === CX.cur.id)) CX.cur = CX.pool.length ? CX.pool[Math.floor(Math.random() * CX.pool.length)] : null;
+  cxRender();
+}
+
+var cxShown = "";
+function cxRender() {
+  const loggedIn = !!(sb && MIXO.user);
+  const n = CX.pool.length, m = CX.cur;
+  $("#cxCount").textContent = n;
+  $("#cxCountTxt").textContent = n === 1 ? "USER AVAILABLE" : "USERS AVAILABLE";
+  $("#cxCard").classList.toggle("empty", !m);
+  if (m) {
+    setAv($("#cxAv"), m.a, m.n || m.u);
+    $("#cxName").textContent = m.n || m.u || "User";
+    const earth = m.c === "Earth";
+    $("#cxLoc").innerHTML = m.c ? `<svg class="ic${earth ? " earth" : ""}"><use href="#i-${earth ? "earth" : "pin"}"/></svg><span>${esc(m.c)}</span>` : "";
+    if (cxShown !== m.id) {
+      cxShown = m.id;
+      const c = $("#cxCard"); c.classList.remove("swap"); void c.offsetWidth; c.classList.add("swap");
+    }
+  } else {
+    cxShown = "";
+    $("#cxEmptyTxt").innerHTML = !loggedIn ? "Log in to meet new people."
+      : CX.all.length ? "No one matches your filter.<br>Try changing it."
+      : "No one is available right now.<br>Stay here, people join all the time.";
+  }
+  $("#cxFilter").classList.toggle("active", !!(CX.premium && (CX.filt.countries.length || CX.filt.hideEarth)));
+  $("#cxFilter .cx-lock").classList.toggle("hidden", CX.premium);
+  cxRenderQuota();
+}
+function cxRenderQuota() {
+  const el = $("#cxQuota");
+  if (!sb || !MIXO.user) { el.textContent = ""; return; }
+  const lim = cxLimit(), used = CX.quota ? CX.quota.used : 0, left = Math.max(0, lim - used);
+  const wait = CX.quota && used > 0 && CX.quota.resets_at ? cxWait(CX.quota.resets_at) : "";
+  el.textContent = left + " of " + lim + " requests left" + (wait ? " · next one back in " + wait : "");
+}
+function cxSkip() {
+  if (CX.pool.length < 2) return;
+  let n;
+  do { n = CX.pool[Math.floor(Math.random() * CX.pool.length)]; } while (n.id === CX.cur.id);
+  CX.cur = n;
+  cxRender();
+}
+
+async function cxRequest() {
+  const m = CX.cur;
+  if (!m || CX.busy) return;
+  if (!sb || !MIXO.user) return toast("Log in to connect.");
+  if (call.state !== "idle") return toast("You're already in a call.");
+  if (!window.RTCPeerConnection || !navigator.mediaDevices) return toast("Calls aren't supported in this browser.");
+  if (CX.quota && CX.quota.used >= CX.quota.limit) return cxLimitHit();
+  CX.busy = true;
+  call.state = "starting";
+  try { call.stream = await navigator.mediaDevices.getUserMedia(micOpts); }
+  catch (e) { call.state = "idle"; CX.busy = false; return toast("Allow the microphone to make calls."); }
+  const r = await sb.rpc("connect_request", { p_callee: m.id });
+  if (r.error) {
+    callCleanup(); CX.busy = false;
+    const msg = r.error.message || "";
+    if (/call_limit/.test(msg)) { await loadQuota(); return cxLimitHit(); }
+    return toast(/does not exist|schema cache|could not find/i.test(msg) ? "Run mixo_connect.sql in Supabase first." : "Couldn't send the request.");
+  }
+  CX.quota = { used: r.data.used, limit: r.data.limit, resets_at: r.data.resets_at };
+  cxRenderQuota();
+  call.id = r.data.call_id;
+  call.peer = m.id;
+  call.role = "caller";
+  call.state = "ringing";
+  inbox.profiles.set(m.id, { id: m.id, username: m.u, display_name: m.n, avatar_url: m.a });
+  callShow("out", m.id);
+  callStat("Calling...");
+  makePc();
+  try {
+    const offer = await call.pc.createOffer();
+    await call.pc.setLocalDescription(offer);
+    await sendSignal("offer", { type: offer.type, sdp: offer.sdp });
+  } catch (e) { CX.busy = false; toast("Couldn't start the call."); return callEnd("ended"); }
+  CX.busy = false;
+  call.ring = setTimeout(() => { if (call.state === "ringing") { toast("No answer."); callEnd("missed"); } }, 45000);
+}
+function cxLimitHit() {
+  if (CX.premium) {
+    const w = CX.quota && CX.quota.resets_at ? cxWait(CX.quota.resets_at) : "";
+    toast("You've used all your requests." + (w ? " Another one frees up in " + w + "." : ""));
+  } else openPlans("limit");
+}
+
+// ---------- filter (Premium) ----------
+var FS = { countries: new Set(), hideEarth: false, q: "" };
+function openFilter() {
+  if (!MIXO.user) return toast("Log in to use filters.");
+  if (!CX.premium) return openPlans("filter");
+  FS.countries = new Set(CX.filt.countries); FS.hideEarth = CX.filt.hideEarth; FS.q = "";
+  $("#fsSearch").value = "";
+  renderFilter();
+  $("#cxSheet").classList.remove("hidden");
+}
+function renderFilter() {
+  $("#fsEarth").classList.toggle("on", FS.hideEarth);
+  const q = FS.q.trim().toLowerCase();
+  const names = [...CC.keys()].sort().filter((n) => !q || n.toLowerCase().includes(q));
+  $("#fsList").innerHTML = names.map((n) =>
+    `<button type="button" class="fs-row${FS.countries.has(n) ? " on" : ""}" data-n="${esc(n)}"><span class="fs-fl">${flagOf(n)}</span><span>${esc(n)}</span><svg class="ic"><use href="#i-check"/></svg></button>`
+  ).join("") || '<p class="fs-none">No country found</p>';
+  fsCount();
+}
+const fsCount = () => { $("#fsSel").textContent = FS.countries.size ? FS.countries.size + " selected" : "All countries"; };
+$("#fsList").addEventListener("click", (e) => {
+  const b = e.target.closest(".fs-row");
+  if (!b) return;
+  const n = b.dataset.n;
+  FS.countries.has(n) ? FS.countries.delete(n) : FS.countries.add(n);
+  b.classList.toggle("on", FS.countries.has(n));
+  fsCount();
+});
+$("#fsSearch").addEventListener("input", (e) => { FS.q = e.target.value; renderFilter(); });
+$("#fsEarth").onclick = () => { FS.hideEarth = !FS.hideEarth; $("#fsEarth").classList.toggle("on", FS.hideEarth); };
+$("#fsClear").onclick = () => { FS.countries.clear(); FS.hideEarth = false; renderFilter(); };
+$("#fsApply").onclick = () => {
+  CX.filt = { countries: [...FS.countries], hideEarth: FS.hideEarth };
+  try { localStorage.setItem("mixo_cx_filter", JSON.stringify(CX.filt)); } catch (e) {}
+  $("#cxSheet").classList.add("hidden");
+  cxApply();
+};
+$("#cxSheet").addEventListener("click", (e) => { if (e.target.id === "cxSheet") $("#cxSheet").classList.add("hidden"); });
+
+// ---------- plan picker ----------
+function openPlans(why) {
+  const st = $("#plStatus");
+  let msg = "";
+  if (CX.premium && CX.until) msg = "You're Premium until " + new Date(CX.until).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+  else if (why === "filter") msg = "Filters are for Premium members";
+  else if (why === "limit") msg = "You've used all " + cxLimit() + " free requests";
+  st.textContent = msg;
+  st.classList.toggle("hidden", !msg);
+  plansRender();
+  $("#plans").scrollTop = 0;
+  $("#plans").classList.remove("hidden");
+}
+function plansRender() {
+  $("#plCards").innerHTML = PLANS.map((p) =>
+    `<button type="button" class="pl-card${p.id === PL.sel ? " on" : ""}" data-id="${p.id}">${p.badge ? `<span class="pl-badge">${p.badge}</span>` : ""}<span class="pl-radio"></span><span class="pl-mid"><b>${p.name}</b><small>${p.note}</small></span><span class="pl-price"><b>$${p.price}</b><small>/ ${p.per}</small></span></button>`
+  ).join("");
+  const p = PLANS.find((x) => x.id === PL.sel);
+  $("#plGo").textContent = (CX.premium ? "Extend" : "Continue") + " · $" + p.price + " / " + p.per;
+}
+$("#plCards").addEventListener("click", (e) => {
+  const b = e.target.closest(".pl-card");
+  if (!b) return;
+  PL.sel = b.dataset.id;
+  plansRender();
+});
+$("#plClose").onclick = () => $("#plans").classList.add("hidden");
+$("#plGo").onclick = () => {
+  if (!MIXO.user) return toast("Log in to get Premium.");
+  const link = PAY_LINKS[PL.sel];
+  if (!link) return toast("Payments aren't connected yet.");
+  location.href = link + (link.includes("?") ? "&" : "?") + "client_reference_id=" + encodeURIComponent(meId());
+};
+
+$("#cxReq").onclick = cxRequest;
+$("#cxSkip").onclick = cxSkip;
+$("#cxFilter").onclick = openFilter;
+$("#cxBack").onclick = () => go("home");

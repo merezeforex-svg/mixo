@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#06123a">
 <title>MIXO</title>
-<link rel="stylesheet" href="style.css?v=28">
+<link rel="stylesheet" href="style.css?v=26">
 </head>
 <body>
 
@@ -41,6 +41,11 @@
 <symbol id="i-phone" viewBox="0 0 24 24"><rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M11 18.5h2"/></symbol>
 <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
 <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+<symbol id="i-users" viewBox="0 0 24 24"><circle cx="9" cy="8.5" r="3.3"/><path d="M2.8 19.5a6.2 6.2 0 0 1 12.4 0"/><circle cx="17" cy="9.5" r="2.5"/><path d="M16.5 14.2a5 5 0 0 1 4.7 5"/></symbol>
+<symbol id="i-down" viewBox="0 0 24 24"><path d="m5 9 7 7 7-7"/></symbol>
+<symbol id="i-filter" viewBox="0 0 24 24"><path d="M3.5 7h9M17.5 7h3M3.5 17h3M11.5 17h9"/><circle cx="15" cy="7" r="2.5"/><circle cx="9" cy="17" r="2.5"/></symbol>
+<symbol id="i-gift" viewBox="0 0 24 24"><rect x="3.5" y="9" width="17" height="4" rx="1.2"/><path d="M5 13v7h14v-7M12 9v11M12 9c-3 0-4.8-1-4.8-2.6A2 2 0 0 1 9 4.5C10.8 4.5 12 7 12 9zm0 0c3 0 4.8-1 4.8-2.6A2 2 0 0 0 15 4.5C13.2 4.5 12 7 12 9z"/></symbol>
+<symbol id="i-crown" viewBox="0 0 24 24"><path d="m3.5 8 4.5 4 4-6.5 4 6.5 4.5-4-1.7 10.5H5.2z"/><path d="M5.5 21h13"/></symbol>
 <symbol id="i-flip" viewBox="0 0 24 24"><path d="M4 11a8 8 0 0 1 14-4l2 2M20 13a8 8 0 0 1-14 4l-2-2"/><path d="M20 4v5h-5M4 20v-5h5"/></symbol>
 <symbol id="i-bolt" viewBox="0 0 24 24"><path d="M13 3 5.5 13.5H11L10 21l8-10.5h-5.5z"/></symbol>
 <symbol id="i-timer" viewBox="0 0 24 24"><circle cx="12" cy="13.5" r="7.5"/><path d="M12 9.5v4l2.5 1.5M9.5 3h5"/></symbol>
@@ -75,8 +80,6 @@
   <circle cx="142" cy="139" r="10" fill="#eef4ff"/><circle cx="180" cy="139" r="10" fill="#eef4ff"/><circle cx="218" cy="139" r="10" fill="#eef4ff"/>
   <g stroke-linecap="round" stroke-width="7" fill="none"><path d="M84 66 64 54M76 90 48 84" stroke="#2fb4ff"/><path d="M350 62 372 46M358 88 386 80" stroke="#ff3a5e"/></g>
 </symbol>
-<symbol id="i-micoff" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 10.2 5.3M18.5 11a6.5 6.5 0 0 1-.4 2.2M12 17.5V21M4 4l16 16"/></symbol>
-<symbol id="i-speaker" viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 6v12l-4.5-3.5H4z" fill="currentColor"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/></symbol>
 <symbol id="banner-art" viewBox="0 0 400 170" preserveAspectRatio="xMidYMid slice">
   <g fill="none" stroke-linecap="round">
     <path d="M-10 118C50 40 110 150 190 92S330 36 410 96" stroke="#d9f3ff" stroke-opacity=".85" stroke-width="2"/>
@@ -162,12 +165,26 @@
     </section>
 
     <section id="connect" class="page">
-      <h2>Connect</h2>
-      <p class="sub left">Talk to someone new, voice only.</p>
-      <div class="orb-wrap">
-        <button id="findBtn" class="orb"><svg class="ic big"><use href="#i-connect"/></svg><span>Find someone</span></button>
+      <div class="cx-pill cx-count"><svg class="ic"><use href="#i-users"/></svg><span><b id="cxCount">0</b> <span id="cxCountTxt">USERS AVAILABLE</span></span></div>
+      <div class="cx-bar">
+        <button id="cxBack" class="cx-round" aria-label="Back to Home"><svg class="ic"><use href="#i-down"/></svg></button>
+        <button id="cxFilter" class="cx-filter"><svg class="ic"><use href="#i-filter"/></svg><span>Filter</span><svg class="ic cx-lock"><use href="#i-crown"/></svg></button>
       </div>
-      <p class="sub">People available now: <b>0</b></p>
+      <div class="cx-card empty" id="cxCard">
+        <div class="cx-who">
+          <div class="cx-ring"><div class="cx-av" id="cxAv">M</div></div>
+          <div class="cx-name"><span id="cxName">Name</span><i class="cx-dot"></i></div>
+          <div class="cx-loc" id="cxLoc"></div>
+        </div>
+        <div class="cx-empty">
+          <svg class="ic big"><use href="#i-users"/></svg>
+          <p id="cxEmptyTxt">No one is available right now.</p>
+        </div>
+        <button id="cxReq" class="cx-req">REQUEST</button>
+        <div class="cx-quota" id="cxQuota"></div>
+        <button id="cxSkip" class="cx-skip">Skip</button>
+      </div>
+      <div class="cx-pill cx-wait"><svg class="ic"><use href="#i-gift"/></svg><span>WAITING FOR REQUESTS</span></div>
     </section>
 
     <section id="profile" class="page ppage">
@@ -251,24 +268,6 @@
       <button type="submit" id="chatSend" class="ch-send mic" aria-label="Send"><svg class="ic ic-send"><use href="#i-send"/></svg><svg class="ic ic-mic"><use href="#i-mic"/></svg></button>
     </form>
     <input type="file" id="chatImg" accept="image/*" hidden>
-  </div>
-
-  <div id="callScreen" class="callscr hidden">
-    <div class="call-top">
-      <div class="call-rings"><i></i><i></i>
-        <div class="call-ring"><div class="call-av iav" id="callAv"></div></div>
-      </div>
-      <div class="call-wave"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
-      <h2 id="callName">Name</h2>
-      <p id="callStatus">Calling...</p>
-    </div>
-    <div class="call-btns">
-      <div class="cbw" id="callMuteW"><button type="button" id="callMute" class="cb" aria-label="Mute"><svg class="ic"><use href="#i-micoff"/></svg></button></div>
-      <div class="cbw"><button type="button" id="callEnd" class="cb end" aria-label="End call"><svg class="ic"><use href="#i-call"/></svg></button></div>
-      <div class="cbw" id="callSpkW"><button type="button" id="callSpk" class="cb spk" aria-label="Speaker"><svg class="ic"><use href="#i-speaker"/></svg></button></div>
-      <div class="cbw hidden" id="callAcceptW"><button type="button" id="callAccept" class="cb ok" aria-label="Answer"><svg class="ic"><use href="#i-call"/></svg></button></div>
-    </div>
-    <audio id="callAudio" autoplay playsinline></audio>
   </div>
 
   <div id="limitModal" class="lim hidden"><div class="lim-card"><p>You can only send up to one message until user accepts</p><button type="button" id="limitOk">CONTINUE</button></div></div>
@@ -535,8 +534,66 @@
   </div>
 </div>
 
+<div id="cxSheet" class="sheet hidden">
+  <div class="panel fs">
+    <h3>Filter</h3>
+    <button type="button" class="fs-toggle" id="fsEarth"><svg class="ic"><use href="#i-earth"/></svg><span><b>Hide Earth users</b><small>People who hide their country</small></span><i class="fs-sw"></i></button>
+    <div class="fs-head"><b>Countries</b><span id="fsSel">All countries</span></div>
+    <input id="fsSearch" class="fs-search" type="search" placeholder="Search a country" autocomplete="off">
+    <div id="fsList" class="fs-list"></div>
+    <div class="erow">
+      <button type="button" class="pbtn line" id="fsClear">Clear</button>
+      <button type="button" class="pbtn main" id="fsApply">Apply</button>
+    </div>
+  </div>
+</div>
+
+<div id="plans" class="plans hidden">
+  <div class="pl-wrap">
+    <button id="plClose" class="cx-round" aria-label="Close"><svg class="ic"><use href="#i-x"/></svg></button>
+    <div class="pl-hero">
+      <div class="pl-crown"><svg class="ic"><use href="#i-crown"/></svg></div>
+      <h2>MIXO Premium</h2>
+      <p>Meet the people you want, more often.</p>
+      <span class="pl-status hidden" id="plStatus"></span>
+    </div>
+    <ul class="pl-feat">
+      <li><span class="pl-fi"><svg class="ic"><use href="#i-filter"/></svg></span><span><b>Country filter</b><small>Choose the countries you want to meet</small></span></li>
+      <li><span class="pl-fi"><svg class="ic"><use href="#i-earth"/></svg></span><span><b>Hide Earth users</b><small>Skip people who hide their location</small></span></li>
+      <li><span class="pl-fi"><svg class="ic"><use href="#i-connect"/></svg></span><span><b>20 requests every 5 hours</b><small>Free accounts get 10</small></span></li>
+    </ul>
+    <div class="pl-cards" id="plCards"></div>
+    <div class="pl-cmp">
+      <div class="pl-r pl-h"><span></span><span>Free</span><span>Premium</span></div>
+      <div class="pl-r"><span>Requests / 5 hours</span><span>10</span><span>20</span></div>
+      <div class="pl-r"><span>Country filter</span><span>-</span><span>&#10003;</span></div>
+      <div class="pl-r"><span>Hide Earth users</span><span>-</span><span>&#10003;</span></div>
+    </div>
+    <button id="plGo" class="cx-req">Continue</button>
+    <p class="pl-fine">Prices in US dollars. Cancel anytime.</p>
+  </div>
+</div>
+
+<div id="callUI" class="callui hidden" data-mode="out">
+  <div class="cl-top">MIXO voice call</div>
+  <div class="cl-mid">
+    <div class="cl-rings"><i></i><i></i><i></i><div class="cl-av"><div class="iav" id="clAv"></div></div></div>
+    <h2 id="clName">User</h2>
+    <p id="clStat">Calling...</p>
+  </div>
+  <div class="cl-btns in">
+    <button type="button" class="cl-b dec" id="clDecline" aria-label="Decline"><svg class="ic"><use href="#i-call"/></svg></button>
+    <button type="button" class="cl-b acc" id="clAccept" aria-label="Answer"><svg class="ic"><use href="#i-call"/></svg></button>
+  </div>
+  <div class="cl-btns live">
+    <button type="button" class="cl-b mute" id="clMute" aria-label="Mute"><svg class="ic"><use href="#i-mic"/></svg></button>
+    <button type="button" class="cl-b dec" id="clHang" aria-label="Hang up"><svg class="ic"><use href="#i-call"/></svg></button>
+  </div>
+</div>
+<audio id="callAudio" autoplay playsinline></audio>
+
 <div id="toast"></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
-<script src="app.js?v=26"></script>
+<script src="app.js?v=24"></script>
 </body>
 </html>
