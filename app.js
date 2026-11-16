@@ -2561,3 +2561,147 @@ $("#cGrid").addEventListener("click", (e) => {
   const p = postCache.get(String(t.dataset.id));
   if (p) openVidCard(p.id);
 });
+
+// ============ VOICE CALLS (WebRTC; the "ring" travels over Supabase Realtime) ============
+// To help calls connect on strict mobile networks, add a TURN server here later.
+const ICE = [{ urls: "stun:stun.l.google.com:19302" }, { urls: "stun:stun1.l.google.com:19302" }];
+const call = { state: "idle", peer: null, pc: null, stream: null, offer: null, queue: [], answered: false, t0: 0, tick: 0, ring: 0, to: 0 };
+let callCh = null, actx = null;
+const sigCh = new Map();
+
+async function sigTo(uid, p) {
+  let ch = sigCh.get(uid);
+  if (!ch) { ch = sb.channel("call-" + uid); sigCh.set(uid, ch); ch.subscribe(); }
+  for (let i = 0; i < 25 && ch.state !== "joined"; i++) await new Promise((r) => setTimeout(r, 120));
+  return ch.send({ type: "broadcast", event: "sig", payload: { ...p, from: meId() } });
+}
+function ringStart(out) {
+  ringStop();
+  try {
+    actx = actx || new (window.AudioContext || window.webkitAudioContext)();
+    const beep = () => { const o = actx.createOscillator(), g = actx.createGain(); o.frequency.value = out ? 425 : 520; g.gain.value = 0.06; o.connect(g); g.connect(actx.destination); o.start(); o.stop(actx.currentTime + 0.4); };
+    beep(); call.ring = setInterval(beep, 2000);
+  } catch (e) {}
+}
+function ringStop() { clearInterval(call.ring); call.ring = 0; }
+function showCall(status, incoming) {
+  const p = call.peer || {};
+  $("#callName").textContent = p.display_name || p.username || "User";
+  setAv($("#callAv"), p.avatar_url, p.username);
+  $("#callStatus").textContent = status;
+  $("#callAcceptW").classList.toggle("hidden", !incoming);
+  $("#callMuteW").classList.toggle("hidden", !!incoming);
+  $("#callSpkW").classList.toggle("hidden", !!incoming);
+  $("#callEndL").textContent = incoming ? "Decline" : "End Call";
+  $("#callScreen").classList.remove("hidden");
+}
+function callCleanup(msg) {
+  clearTimeout(call.to); clearInterval(call.tick); ringStop();
+  if (call.pc) { call.pc.onicecandidate = call.pc.ontrack = call.pc.onconnectionstatechange = null; call.pc.close(); }
+  if (call.stream) call.stream.getTracks().forEach((t) => t.stop());
+  Object.assign(call, { state: "idle", peer: null, pc: null, stream: null, offer: null, queue: [], answered: false, t0: 0 });
+  $("#callAudio").srcObject = null;
+  $("#callMute").classList.remove("on"); $("#callSpk").classList.remove("on");
+  $("#callScreen").classList.add("hidden");
+  if (msg) toast(msg);
+}
+function callEnd(msg, tell) {
+  if (tell !== false && call.peer) sigTo(call.peer.id, { type: "end" });
+  callCleanup(msg);
+}
+const getMic = () => navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+function makePC() {
+  const pc = new RTCPeerConnection({ iceServers: ICE });
+  call.pc = pc;
+  call.stream.getTracks().forEach((t) => pc.addTrack(t, call.stream));
+  pc.ontrack = (e) => { const a = $("#callAudio"); a.srcObject = e.streams[0]; a.play().catch(() => {}); };
+  pc.onicecandidate = (e) => { if (e.candidate && call.peer) sigTo(call.peer.id, { type: "ice", c: e.candidate.toJSON() }); };
+  pc.onconnectionstatechange = () => {
+    const s = pc.connectionState;
+    if (s === "connected") {
+      call.state = "on"; ringStop(); clearTimeout(call.to);
+      call.t0 = Date.now(); $("#callStatus").textContent = "0:00";
+      call.tick = setInterval(() => { $("#callStatus").textContent = fmtDur((Date.now() - call.t0) / 1000); }, 500);
+    } else if (s === "failed") callEnd("Call failed. Check your connection.");
+    else if (s === "disconnected") call.to = setTimeout(() => { if (call.pc === pc && pc.connectionState !== "connected") callEnd("Call lost"); }, 6000);
+  };
+}
+const flushIce = () => call.queue.splice(0).forEach((c) => call.pc.addIceCandidate(c).catch(() => {}));
+
+async function callStart() {
+  if (!sb || !MIXO.user || !chat.open || !chat.uid || call.state !== "idle") return;
+  if (!window.RTCPeerConnection) return toast("Calls aren't supported on this browser.");
+  if (!chat.conv || chat.conv.status !== "accepted") return toast("You can call once they accept your request.");
+  if (isBlocked(chat.uid)) return;
+  if (!online.has(chat.uid)) return toast("They're offline right now.");
+  try { call.stream = await getMic(); } catch (e) { return toast("Allow the microphone to make calls."); }
+  call.peer = { ...(chat.user || {}), id: chat.uid };
+  call.state = "out";
+  showCall("Calling...");
+  ringStart(true);
+  makePC();
+  const o = await call.pc.createOffer();
+  await call.pc.setLocalDescription(o);
+  sigTo(chat.uid, { type: "offer", sdp: o.sdp });
+  call.to = setTimeout(() => callEnd("No answer"), 45000);
+}
+async function onSig(p) {
+  if (!p || !p.from || isBlocked(p.from)) return;
+  if (p.type === "offer") {
+    if (!inbox.convs.some((c) => otherOf(c) === p.from && c.status === "accepted")) return;
+    if (call.state !== "idle") return sigTo(p.from, { type: "busy" });
+    call.state = "in"; call.offer = p.sdp;
+    call.peer = { ...(inbox.profiles.get(p.from) || {}), id: p.from };
+    showCall("Incoming call", true);
+    ringStart(false);
+    call.to = setTimeout(() => callEnd("Missed call"), 45000);
+    return;
+  }
+  if (!call.peer || call.peer.id !== p.from) return;
+  if (p.type === "answer" && call.pc) { await call.pc.setRemoteDescription({ type: "answer", sdp: p.sdp }); flushIce(); }
+  else if (p.type === "ice") { if (call.pc && call.pc.remoteDescription) call.pc.addIceCandidate(p.c).catch(() => {}); else call.queue.push(p.c); }
+  else if (p.type === "end") callEnd("Call ended", false);
+  else if (p.type === "decline") callEnd("Call declined", false);
+  else if (p.type === "busy") callEnd("They're on another call", false);
+}
+$("#callAccept").onclick = async () => {
+  if (call.state !== "in" || call.answered) return;
+  call.answered = true; ringStop(); clearTimeout(call.to);
+  try { call.stream = await getMic(); }
+  catch (e) { sigTo(call.peer.id, { type: "decline" }); return callCleanup("Allow the microphone to answer calls."); }
+  makePC();
+  await call.pc.setRemoteDescription({ type: "offer", sdp: call.offer });
+  flushIce();
+  const a = await call.pc.createAnswer();
+  await call.pc.setLocalDescription(a);
+  sigTo(call.peer.id, { type: "answer", sdp: a.sdp });
+  showCall("Connecting...", false);
+};
+$("#callEnd").onclick = () => {
+  if (call.state === "in" && !call.answered) { sigTo(call.peer.id, { type: "decline" }); callCleanup(); }
+  else callEnd();
+};
+$("#callMute").onclick = () => {
+  const t = call.stream && call.stream.getAudioTracks()[0];
+  if (!t) return;
+  t.enabled = !t.enabled;
+  $("#callMute").classList.toggle("on", !t.enabled);
+};
+$("#callSpk").onclick = async () => {
+  const b = $("#callSpk"), on = !b.classList.contains("on");
+  b.classList.toggle("on", on);
+  const a = $("#callAudio");
+  if (a.setSinkId) { try { await a.setSinkId("default"); } catch (e) {} }
+};
+$("#chatCall").onclick = callStart;
+
+// listen for calls while logged in (starts and stops by itself)
+setInterval(() => {
+  if (MIXO.user && sb && !callCh) {
+    callCh = sb.channel("call-" + MIXO.user.id).on("broadcast", { event: "sig" }, (m) => onSig(m.payload)).subscribe();
+  } else if (!MIXO.user && callCh) {
+    sb.removeChannel(callCh); callCh = null;
+    sigCh.forEach((c) => sb.removeChannel(c)); sigCh.clear();
+    callCleanup();
+  }
+}, 1000);
