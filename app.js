@@ -2564,16 +2564,21 @@ $("#cGrid").addEventListener("click", (e) => {
 
 // ============ VOICE CALLS (WebRTC; the "ring" travels over Supabase Realtime) ============
 // To help calls connect on strict mobile networks, add a TURN server here later.
-const ICE = [{ urls: "stun:stun.l.google.com:19302" }, { urls: "stun:stun1.l.google.com:19302" }];
+const ICE = [
+  { urls: "stun:stun.l.google.com:19302" },
+  // free public relay so calls can connect on mobile data; replace with your own TURN account for best reliability
+  { urls: ["turn:openrelay.metered.ca:80", "turn:openrelay.metered.ca:443", "turns:openrelay.metered.ca:443?transport=tcp"], username: "openrelayproject", credential: "openrelayproject" },
+];
 const call = { state: "idle", peer: null, pc: null, stream: null, offer: null, queue: [], answered: false, t0: 0, tick: 0, ring: 0, to: 0 };
 let callCh = null, actx = null;
 const sigCh = new Map();
 
 async function sigTo(uid, p) {
-  let ch = sigCh.get(uid);
-  if (!ch) { ch = sb.channel("call-" + uid); sigCh.set(uid, ch); ch.subscribe(); }
-  for (let i = 0; i < 25 && ch.state !== "joined"; i++) await new Promise((r) => setTimeout(r, 120));
-  return ch.send({ type: "broadcast", event: "sig", payload: { ...p, from: meId() } });
+  const { type, ...rest } = p;
+  const r = await sb.rpc("send_signal", { p_to: uid, p_kind: type, p_payload: rest });
+  if (r.error && type === "offer") {
+    callEnd(/does not exist|schema cache|could not find/i.test(r.error.message || "") ? "Run mixo_calls.sql in Supabase first." : "Couldn't start the call.", false);
+  }
 }
 function ringStart(out) {
   ringStop();
@@ -2592,7 +2597,6 @@ function showCall(status, incoming) {
   $("#callAcceptW").classList.toggle("hidden", !incoming);
   $("#callMuteW").classList.toggle("hidden", !!incoming);
   $("#callSpkW").classList.toggle("hidden", !!incoming);
-  $("#callEndL").textContent = incoming ? "Decline" : "End Call";
   $("#callScreen").classList.remove("hidden");
 }
 function callCleanup(msg) {
@@ -2658,7 +2662,12 @@ async function onSig(p) {
     return;
   }
   if (!call.peer || call.peer.id !== p.from) return;
-  if (p.type === "answer" && call.pc) { await call.pc.setRemoteDescription({ type: "answer", sdp: p.sdp }); flushIce(); }
+  if (p.type === "answer" && call.pc) {
+    $("#callStatus").textContent = "Connecting...";
+    ringStop(); clearTimeout(call.to);
+    call.to = setTimeout(() => { if (call.state !== "on") callEnd("Couldn't connect. Try Wi-Fi."); }, 25000);
+    await call.pc.setRemoteDescription({ type: "answer", sdp: p.sdp }); flushIce();
+  }
   else if (p.type === "ice") { if (call.pc && call.pc.remoteDescription) call.pc.addIceCandidate(p.c).catch(() => {}); else call.queue.push(p.c); }
   else if (p.type === "end") callEnd("Call ended", false);
   else if (p.type === "decline") callEnd("Call declined", false);
@@ -2676,6 +2685,7 @@ $("#callAccept").onclick = async () => {
   await call.pc.setLocalDescription(a);
   sigTo(call.peer.id, { type: "answer", sdp: a.sdp });
   showCall("Connecting...", false);
+  call.to = setTimeout(() => { if (call.state !== "on") callEnd("Couldn't connect. Try Wi-Fi."); }, 25000);
 };
 $("#callEnd").onclick = () => {
   if (call.state === "in" && !call.answered) { sigTo(call.peer.id, { type: "decline" }); callCleanup(); }
@@ -2698,7 +2708,12 @@ $("#chatCall").onclick = callStart;
 // listen for calls while logged in (starts and stops by itself)
 setInterval(() => {
   if (MIXO.user && sb && !callCh) {
-    callCh = sb.channel("call-" + MIXO.user.id).on("broadcast", { event: "sig" }, (m) => onSig(m.payload)).subscribe();
+    callCh = sb.channel("calls-" + MIXO.user.id)
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "call_signals" }, (m) => {
+        const r = m.new;
+        if (!r || r.to_id !== MIXO.user.id || Date.now() - new Date(r.created_at) > 60000) return;
+        onSig({ ...(r.payload || {}), type: r.kind, from: r.from_id });
+      }).subscribe();
   } else if (!MIXO.user && callCh) {
     sb.removeChannel(callCh); callCh = null;
     sigCh.forEach((c) => sb.removeChannel(c)); sigCh.clear();
