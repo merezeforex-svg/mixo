@@ -93,6 +93,7 @@
 <symbol id="x-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.500 11a6.500 6.500 0 0 0 13 0M12 17.500V21M9 21h6"/></symbol>
 <symbol id="x-eye" viewBox="0 0 24 24"><path d="M2.500 12S6 5.500 12 5.500 21.500 12 21.500 12 18 18.500 12 18.500 2.500 12 2.500 12z"/><circle cx="12" cy="12" r="3"/></symbol>
 <symbol id="x-chat" viewBox="0 0 24 24"><path d="M5 5h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-7l-4.500 3.500V17H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z"/></symbol>
+<symbol id="x-up" viewBox="0 0 24 24"><path d="m6 15 6-6 6 6"/></symbol>
 <symbol id="x-check" viewBox="0 0 24 24"><path d="m5 12.500 4.500 4.500L19 7"/></symbol>
 <symbol id="x-phone" viewBox="0 0 24 24"><path d="M6.500 3.500h3l1.500 4-2 1.500a11 11 0 0 0 6 6l1.500-2 4 1.500v3a2 2 0 0 1-2 2A15.500 15.500 0 0 1 4.500 5.500a2 2 0 0 1 2-2z"/></symbol>
 <symbol id="x-lock" viewBox="0 0 24 24"><rect x="5" y="10.500" width="14" height="10" rx="2.500"/><path d="M8 10.500V8a4 4 0 0 1 8 0v2.500"/></symbol>
@@ -227,19 +228,6 @@
 
       <div class="cx-deck" id="cxDeck" aria-label="People online"></div>
 
-      <div class="cx-stage">
-        <div class="cx-wave l" aria-hidden="true"></div>
-        <button type="button" class="cx-start" id="cxStart" data-state="idle" aria-label="Start talking">
-          <i class="cx-p1"></i><i class="cx-p2"></i>
-          <span class="cx-disc">
-            <svg class="x cx-mic"><use href="#x-mic"/></svg>
-            <b id="cxStartT">Start<br>Talking</b>
-            <small id="cxStartS">Tap to connect</small>
-          </span>
-        </button>
-        <div class="cx-wave r" aria-hidden="true"></div>
-      </div>
-
       <div class="cx-filters" id="cxFilters">
         <button type="button" class="cxf" data-scope="earth"><svg class="x"><use href="#x-globe"/></svg>Earth</button>
         <button type="button" class="cxf" data-scope="country"><svg class="x"><use href="#x-pin"/></svg>My country</button>
@@ -248,7 +236,7 @@
 
       <div class="cx-quota" id="cxQuotaBox">
         <svg class="x"><use href="#x-bolt"/></svg>
-        <div class="cx-q-mid"><b id="cxQuotaTxt">5 of 5 connects left today</b><div class="cx-q-bar"><i id="cxQuotaBar"></i></div></div>
+        <div class="cx-q-mid"><b id="cxQuotaTxt">10 of 10 connects left today</b><div class="cx-q-bar"><i id="cxQuotaBar"></i></div></div>
         <button type="button" id="cxUpgrade" class="cx-up">Upgrade</button>
       </div>
     </section>

@@ -2779,7 +2779,7 @@ var PLANS = [
   { id: "yearly", name: "Yearly", price: "49.99", sub: "About $4.17 a month", save: "Save 68%", note: "48% cheaper than monthly", badge: "BEST VALUE" },
 ];
 var PL = { sel: "yearly" };
-var FREE_CONNECTS = 5, FREE_SKIPS = 3, MAX_INTERESTS = 5;
+var FREE_CONNECTS = 10, FREE_SKIPS = 3, MAX_INTERESTS = 5;
 
 var FRAMES = [{"id": "neon", "name": "Neon", "premium": false, "anim": "static"}, {"id": "aqua", "name": "Aqua", "premium": false, "anim": "static"}, {"id": "rose", "name": "Rose", "premium": false, "anim": "static"}, {"id": "aurora", "name": "Aurora", "premium": true, "anim": "spin"}, {"id": "gold", "name": "Gold", "premium": true, "anim": "spin"}, {"id": "inferno", "name": "Inferno", "premium": true, "anim": "spin"}, {"id": "ocean", "name": "Ocean", "premium": true, "anim": "spin"}, {"id": "galaxy", "name": "Galaxy", "premium": true, "anim": "spin"}, {"id": "candy", "name": "Candy", "premium": true, "anim": "spin"}, {"id": "matrix", "name": "Matrix", "premium": true, "anim": "spin"}, {"id": "lava", "name": "Lava", "premium": true, "anim": "pulse"}, {"id": "rainbow", "name": "Rainbow", "premium": true, "anim": "spin"}, {"id": "diamond", "name": "Diamond", "premium": true, "anim": "pulse"}, {"id": "sakura", "name": "Sakura", "premium": true, "anim": "pulse"}, {"id": "glitch", "name": "Glitch", "premium": true, "anim": "hue"}];
 // every interest has its own hand-drawn icon (#x-<id> in index.html)
@@ -2897,11 +2897,14 @@ const START_TXT = {
   calling: ["Calling...", "Tap to cancel"],
 };
 function cxPaintStart() {
-  const b = $("#cxStart");
-  if (!b) return;
-  b.dataset.state = CX.state;
-  $("#cxStartT").innerHTML = START_TXT[CX.state][0];
-  $("#cxStartS").innerHTML = START_TXT[CX.state][1];
+  $$("#cxDeck .pc-call").forEach((b) => {
+    const m = CX.deck.find((x) => x.id === b.closest(".pc").dataset.id);
+    if (m) b.innerHTML = cxCallLabel(m);
+  });
+}
+function cxCallLabel(m) {
+  if (CX.state !== "idle") return "CANCEL";
+  return (CX.passed.has(m.id) && !CX.premium ? svgI("lock") : "") + "REQUEST";
 }
 function cxPaintFilters() {
   const custom = cxFiltCustom();
@@ -2965,46 +2968,65 @@ function personCard(m, idx) {
   const earth = !m.c || m.c === "Earth";
   const passed = CX.passed.has(m.id);
   return `<article class="pc${passed ? " passed" : ""}" data-id="${esc(m.id)}" data-i="${idx}">
-    <div class="pc-top"><div class="cx-ring fr" data-frame="${esc(m.f || "neon")}"><span class="cx-av">${m.a ? `<img src="${esc(m.a)}" alt="">` : esc((m.n || "?")[0].toUpperCase())}</span></div>
-      <div class="pc-info"><div class="pc-name"><span>${esc(m.n || m.u || "User")}</span>${m.p ? crownHTML("in") : ""}</div>
-      <div class="pc-loc">${svgI(earth ? "globe" : "pin")}<span>${esc(earth ? "Worldwide" : m.c)}</span></div></div></div>
-    <div class="pc-chips">${(m.i || []).slice(0, 3).map(intChip).join("")}</div>
-    <p class="pc-intro">${m.t ? "\u201c" + esc(m.t) + "\u201d" : ""}</p>
-    <button type="button" class="pc-call" data-a="call">${passed && !CX.premium ? svgI("lock") + "Premium to call" : svgI("phone") + "Call"}</button></article>`;
+    <button type="button" class="pc-up" data-a="more" aria-label="More info">${svgI("up")}</button>
+    <div class="pc-pic cx-ring fr" data-frame="${esc(m.f || "neon")}"><span class="cx-av">${m.a ? `<img src="${esc(m.a)}" alt="">` : esc((m.n || "?")[0].toUpperCase())}</span></div>
+    <div class="pc-body">
+      <div class="pc-name"><span>${esc(m.n || m.u || "User")}</span>${m.p ? crownHTML("in") : ""}</div>
+      <div class="pc-loc">${svgI(earth ? "globe" : "pin")}<span>${esc(earth ? "Worldwide" : m.c)}</span></div>
+      <div class="pc-chips">${(m.i || []).map(intChip).join("")}</div>
+      <p class="pc-intro">${m.t ? "\u201c" + esc(m.t) + "\u201d" : ""}</p>
+    </div>
+    <button type="button" class="pc-call" data-a="call">${cxCallLabel(m)}</button></article>`;
 }
 function cxRenderDeck() {
   const box = $("#cxDeck");
   if (!box) return;
   const keep = box.scrollLeft;
   box.innerHTML = CX.deck.length ? CX.deck.map(personCard).join("")
-    : `<article class="pc empty"><div class="radar">${svgI("globe")}</div><b>No one online yet</b><span>Tap Start Talking and we'll<br>find someone for you.</span></article>`;
+    : `<article class="pc empty"><div class="radar">${svgI("globe")}</div><b>No one online yet</b><span>New people will show up here.<br>Swipe right to see each one.</span></article>`;
   CX.deck.forEach((m, i) => { const el = box.children[i]; if (el) { const r = el.querySelector(".cx-ring"); paintFrame(r, m.f, !!m.p); } });
   box.scrollLeft = keep;
 }
-// people you swipe past become "passed": calling them again needs Premium
-function cxDeckScrolled() {
+// people you swipe past become "passed". Swiping back to one opens Premium.
+function cxDeckIndex() {
   const box = $("#cxDeck");
-  if (!box || !CX.deck.length) return;
+  if (!box || !CX.deck.length) return -1;
   const first = box.children[0], second = box.children[1];
   const step = second ? second.offsetLeft - first.offsetLeft : first.offsetWidth;
-  const i = Math.max(0, Math.min(CX.deck.length - 1, Math.round(box.scrollLeft / Math.max(1, step))));
-  let changed = false;
-  for (let k = 0; k < i; k++) if (!CX.passed.has(CX.deck[k].id)) { CX.passed.add(CX.deck[k].id); changed = true; }
-  if (!changed) return;
+  return { i: Math.max(0, Math.min(CX.deck.length - 1, Math.round(box.scrollLeft / Math.max(1, step)))), step };
+}
+function cxDeckScrolled() {
+  const box = $("#cxDeck"), d = cxDeckIndex();
+  if (!box || d === -1) return;
+  const i = d.i;
+  for (let k = 0; k < i; k++) CX.passed.add(CX.deck[k].id);
+  CX.far = Math.max(CX.far | 0, i);
   [...box.children].forEach((el) => {
     const passed = CX.passed.has(el.dataset.id);
     el.classList.toggle("passed", passed);
-    const b = el.querySelector(".pc-call");
-    if (b) b.innerHTML = passed && !CX.premium ? svgI("lock") + "Premium to call" : svgI("phone") + "Call";
+    const m = CX.deck.find((x) => x.id === el.dataset.id), bt = el.querySelector(".pc-call");
+    if (m && bt) bt.innerHTML = cxCallLabel(m);
   });
+  clearTimeout(CX.backT);
+  if (!CX.premium && i < CX.far && CX.passed.has(CX.deck[i].id)) {
+    CX.backT = setTimeout(() => {   // wait until the swipe settles
+      const n = cxDeckIndex();
+      if (n === -1 || CX.premium || !CX.passed.has(CX.deck[n.i].id) || n.i >= CX.far) return;
+      openPlans("back");
+      box.scrollTo({ left: CX.far * n.step, behavior: "auto" });
+    }, 220);
+  }
 }
 async function cxDeckClick(e) {
-  const b = e.target.closest('[data-a="call"]'), card = e.target.closest(".pc");
-  if (!b || !card) return;
+  const card = e.target.closest(".pc");
+  if (!card) return;
+  if (e.target.closest('[data-a="more"]')) return card.classList.toggle("open");
+  const b = e.target.closest('[data-a="call"]');
+  if (!b) return;
   const m = CX.deck.find((x) => x.id === card.dataset.id);
   if (!m) return;
   if (CX.passed.has(m.id) && !CX.premium) return openPlans("back");
-  if (CX.state !== "idle") return toast("Finish this call first.");
+  if (CX.state !== "idle") return cxCancel();
   if (!sb || !MIXO.user) return toast("Log in to connect.");
   if (call.state !== "idle") return toast("You're already in a call.");
   if (!window.RTCPeerConnection || !navigator.mediaDevices) return toast("Calls aren't supported in this browser.");
@@ -3017,11 +3039,8 @@ async function cxDeckClick(e) {
 
 // ---------- enter / leave the page ----------
 function cxInitOnce() {
-  if (CX.init || !$("#cxStart")) return;
+  if (CX.init || !$("#cxDeck")) return;
   CX.init = true;
-  const L = [10, 16, 24, 34, 46, 60], mk = (a) => a.map((h, i) => `<i style="height:${h}px;animation-delay:${(i * 0.13).toFixed(2)}s"></i>`).join("");
-  $(".cx-wave.l").innerHTML = mk(L);
-  $(".cx-wave.r").innerHTML = mk(L.slice().reverse());
   let raf = 0;
   $("#cxDeck").addEventListener("scroll", () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(cxDeckScrolled); }, { passive: true });
   $("#cxDeck").addEventListener("click", cxDeckClick);
@@ -3048,7 +3067,7 @@ function connectLeave() {
   CX.next = false;
   if (CX.state === "searching") { CX.state = "idle"; cxPaintStart(); }
   if (CX.ch && sb) { try { sb.removeChannel(CX.ch); } catch (e) {} }
-  CX.ch = null; CX.all = []; CX.pool = []; CX.deck = []; CX.passed = new Set();
+  CX.ch = null; CX.all = []; CX.pool = []; CX.deck = []; CX.passed = new Set(); CX.far = 0;
 }
 
 // ---------- START TALKING: find someone online and ring them ----------
@@ -3478,6 +3497,5 @@ $("#plGo").onclick = () => {
   location.href = link + (link.includes("?") ? "&" : "?") + "client_reference_id=" + encodeURIComponent(meId());
 };
 
-$("#cxStart").onclick = cxStartTap;
 $("#cxPrem").onclick = () => openPlans();
 $("#cxUpgrade").onclick = () => openPlans("limit");
