@@ -5,12 +5,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#06123a">
 <title>MIXO</title>
-<link rel="stylesheet" href="style.css?v=26">
+<link rel="stylesheet" href="style.css?v=31">
 </head>
 <body>
 
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
 <defs>
+<linearGradient id="cxo" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#2f6bff"/><stop offset="1" stop-color="#ff3a5e"/></linearGradient>
 <linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#9a7bff"/><stop offset="1" stop-color="#2a5bff"/></linearGradient>
 <linearGradient id="hg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8ff4ff"/><stop offset=".55" stop-color="#2f8bff"/><stop offset="1" stop-color="#1237d6"/></linearGradient>
 <radialGradient id="eg" cx=".35" cy=".3" r=".85"><stop offset="0" stop-color="#8ff4ff"/><stop offset=".5" stop-color="#2f8bff"/><stop offset="1" stop-color="#0b2a9a"/></radialGradient>
@@ -71,6 +72,56 @@
 <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></symbol>
 <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.5v13l11-6.5z" fill="currentColor" stroke="currentColor" stroke-linejoin="round"/></symbol>
 <symbol id="i-pause" viewBox="0 0 24 24"><rect x="6.5" y="5" width="4" height="14" rx="1.2" fill="currentColor" stroke="none"/><rect x="13.5" y="5" width="4" height="14" rx="1.2" fill="currentColor" stroke="none"/></symbol>
+<symbol id="i-edit" viewBox="0 0 24 24"><path d="M4 20h4L19 9a2.1 2.1 0 0 0-3-3L5 17z"/><path d="m14.5 7.5 3 3"/></symbol>
+<symbol id="i-funnel" viewBox="0 0 24 24"><path d="M3.5 5h17l-6.5 7.5V19l-4 1.5v-8z" fill="currentColor" fill-opacity=".25"/></symbol>
+<symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7v5l3.2 2"/></symbol>
+<symbol id="i-warn" viewBox="0 0 24 24"><path d="M12 3.5 2.8 19.5h18.4z" fill="currentColor" fill-opacity=".2"/><path d="M12 10v4.5M12 17.2v.1"/></symbol>
+<symbol id="i-userplus" viewBox="0 0 24 24"><circle cx="9.5" cy="8" r="3.6"/><path d="M3 20a6.5 6.5 0 0 1 12 -3M18 9v6M15 12h6"/></symbol>
+<symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3 4.5 6v5.5c0 4.4 3 8 7.5 9.5 4.5-1.5 7.5-5.1 7.5-9.5V6z"/><path d="m9 12 2.2 2.2L15.5 10"/></symbol>
+<symbol id="i-skip" viewBox="0 0 24 24"><path d="M5 5.5v13l9-6.5zM18 5.5v13"/></symbol>
+<symbol id="x-feet" viewBox="0 0 24 24"><g transform="translate(7.200 14) rotate(-8) scale(.92)"><path d="M0-3C2.600-3 3.400-.5 3 2c-.2 1.600-.8 2.400-.8 4 0 1.800-1 2.600-2.200 2.600-1.400 0-2.200-1.200-2.200-2.800 0-1.600-1-2.800-1-4.800C-3.200-1.600-2.600-3 0-3z"/><circle cx="2.100" cy="-4.700" r="1.250"/><circle cx="-.2" cy="-5.400" r=".85"/><circle cx="-1.900" cy="-4.700" r=".8"/><circle cx="-3.100" cy="-3.600" r=".7"/><circle cx="-3.700" cy="-2.300" r=".6"/></g><g transform="translate(16.800 10) rotate(8) scale(-.92 .92)"><path d="M0-3C2.600-3 3.400-.5 3 2c-.2 1.600-.8 2.400-.8 4 0 1.800-1 2.600-2.200 2.600-1.400 0-2.200-1.200-2.200-2.800 0-1.600-1-2.800-1-4.800C-3.200-1.600-2.600-3 0-3z"/><circle cx="2.100" cy="-4.700" r="1.250"/><circle cx="-.2" cy="-5.400" r=".85"/><circle cx="-1.900" cy="-4.700" r=".8"/><circle cx="-3.100" cy="-3.600" r=".7"/><circle cx="-3.700" cy="-2.300" r=".6"/></g></symbol>
+<symbol id="x-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+<symbol id="x-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7v5l3.5 2"/></symbol>
+<symbol id="x-crown" viewBox="0 0 24 24"><path d="M3.5 8.5 8 12.5l4-7 4 7 4.5-4-1.8 10H5.3z"/><path d="M5.6 21h12.8"/></symbol>
+<symbol id="x-inf" viewBox="0 0 24 24"><path d="M12 12c-2-3-3.5-4-5.5-4a4 4 0 1 0 0 8c2 0 3.5-1 5.5-4zm0 0c2 3 3.500 4 5.500 4a4 4 0 1 0 0-8c-2 0-3.500 1-5.500 4z"/></symbol>
+<symbol id="x-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="4" ry="9"/><path d="M3 12h18M4.500 7.500h15M4.500 16.500h15"/></symbol>
+<symbol id="x-lang" viewBox="0 0 24 24"><path d="M3.500 6h9M8 4v2M5.500 6c.5 4 3.500 7 6.500 8.500M11 6c-.5 3-3 6-6.500 8M12.500 20l4-9 4 9M14 17h5"/></symbol>
+<symbol id="x-heart" viewBox="0 0 24 24"><path d="M12 20s-8-4.800-8-10.200A4.300 4.300 0 0 1 12 7a4.300 4.300 0 0 1 8 2.800C20 15.200 12 20 12 20z"/></symbol>
+<symbol id="x-bolt" viewBox="0 0 24 24"><path d="M13 3 5 13.500h6L10 21l9-11.500h-6z"/></symbol>
+<symbol id="x-image" viewBox="0 0 24 24"><rect x="3.500" y="4.500" width="17" height="15" rx="3"/><circle cx="9" cy="10" r="1.500"/><path d="m4 17 5-4.500 3.500 3 3-2.500 4.500 4"/></symbol>
+<symbol id="x-ff" viewBox="0 0 24 24"><path d="M4 5.500v13l8-6.500zM12.500 5.500v13l8-6.500z"/></symbol>
+<symbol id="x-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.500 11a6.500 6.500 0 0 0 13 0M12 17.500V21M9 21h6"/></symbol>
+<symbol id="x-eye" viewBox="0 0 24 24"><path d="M2.500 12S6 5.500 12 5.500 21.500 12 21.500 12 18 18.500 12 18.500 2.500 12 2.500 12z"/><circle cx="12" cy="12" r="3"/></symbol>
+<symbol id="x-chat" viewBox="0 0 24 24"><path d="M5 5h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-7l-4.500 3.500V17H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z"/></symbol>
+<symbol id="x-check" viewBox="0 0 24 24"><path d="m5 12.500 4.500 4.500L19 7"/></symbol>
+<symbol id="x-phone" viewBox="0 0 24 24"><path d="M6.500 3.500h3l1.500 4-2 1.500a11 11 0 0 0 6 6l1.500-2 4 1.500v3a2 2 0 0 1-2 2A15.500 15.500 0 0 1 4.500 5.500a2 2 0 0 1 2-2z"/></symbol>
+<symbol id="x-lock" viewBox="0 0 24 24"><rect x="5" y="10.500" width="14" height="10" rx="2.500"/><path d="M8 10.500V8a4 4 0 0 1 8 0v2.500"/></symbol>
+<symbol id="x-pin" viewBox="0 0 24 24"><path d="M12 21s-6.500-5.800-6.500-11A6.500 6.500 0 0 1 18.500 10c0 5.200-6.500 11-6.500 11z"/><circle cx="12" cy="10" r="2.300"/></symbol>
+<symbol id="x-star" viewBox="0 0 24 24"><path d="M12 3l2.200 6.300L21 12l-6.800 2.700L12 21l-2.200-6.300L3 12l6.800-2.700z"/></symbol>
+<symbol id="x-gaming" viewBox="0 0 24 24"><path d="M7 8h10a4.500 4.500 0 0 1 4.400 5.400l-.8 3.600a2.400 2.400 0 0 1-4 1.200L14.500 16h-5l-2.100 2.200a2.400 2.400 0 0 1-4-1.200l-.8-3.600A4.500 4.500 0 0 1 7 8z"/><path d="M8 10.500v3M6.500 12h3M15.500 11.200h.01M17.500 13.200h.01"/></symbol>
+<symbol id="x-music" viewBox="0 0 24 24"><path d="M9 18V6l10-2v12"/><circle cx="6.500" cy="18" r="2.500"/><circle cx="16.500" cy="16" r="2.500"/></symbol>
+<symbol id="x-adventures" viewBox="0 0 24 24"><path d="m3 19 6-11 4 6 2.500-3.500L21 19z"/><path d="m9 8 1.800 3"/></symbol>
+<symbol id="x-movies" viewBox="0 0 24 24"><path d="M3.500 10h17v8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/><path d="m3.800 6.600 15.400-3 .8 3.700-15.400 3zM8.500 5.500l2 3.500M13 4.600l2 3.500"/></symbol>
+<symbol id="x-sports" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.500"/><path d="M12 3.500v17M3.500 12h17M6 6c3 3 3 9 0 12M18 6c-3 3-3 9 0 12"/></symbol>
+<symbol id="x-fitness" viewBox="0 0 24 24"><path d="M6.500 8v8M17.500 8v8M3.500 10v4M20.500 10v4M6.500 12h11"/></symbol>
+<symbol id="x-travel" viewBox="0 0 24 24"><path d="M21 4 10 14M21 4l-6 17-3.500-7L4.500 10.500z"/></symbol>
+<symbol id="x-food" viewBox="0 0 24 24"><path d="M3.500 11.500h17c0 5-3.800 8-8.500 8s-8.500-3-8.500-8zM9 4v4M12.500 3.500v5M16 4v4"/></symbol>
+<symbol id="x-art" viewBox="0 0 24 24"><path d="M12 3.500a8.500 8.500 0 1 0 0 17c1.400 0 2-1 1.500-2.200-.6-1.300.2-2.800 1.800-2.800H17a3.500 3.500 0 0 0 3.500-3.500C20.500 6.800 16.800 3.500 12 3.500z"/><path d="M8 10.500h.01M12 7.500h.01M16 10h.01"/></symbol>
+<symbol id="x-tech" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2"/><rect x="10" y="10" width="4" height="4"/><path d="M10 3.500V7M14 3.500V7M10 17v3.500M14 17v3.500M3.500 10H7M3.500 14H7M17 10h3.500M17 14h3.500"/></symbol>
+<symbol id="x-books" viewBox="0 0 24 24"><path d="M5 4.500h10a2 2 0 0 1 2 2V20H7a2 2 0 0 1-2-2zM5 18a2 2 0 0 1 2-2h10M9 8.500h5"/></symbol>
+<symbol id="x-anime" viewBox="0 0 24 24"><path d="M12 3l2.200 6.300L21 12l-6.800 2.700L12 21l-2.200-6.300L3 12l6.800-2.700z"/><path d="M19 3.500v3M17.500 5h3"/></symbol>
+<symbol id="x-fashion" viewBox="0 0 24 24"><path d="M12 7.500a2.200 2.200 0 1 0-2.200-2.200M12 7.500v2L3.500 16a1.800 1.800 0 0 0 1.200 3.200h14.600A1.800 1.800 0 0 0 20.500 16L12 9.500"/></symbol>
+<symbol id="x-pets" viewBox="0 0 24 24"><path d="M12 12.500c-3 0-5.500 2.500-5.500 5 0 1.500 1.200 2 2.500 2 1 0 2-.5 3-.5s2 .5 3 .5c1.300 0 2.500-.5 2.500-2 0-2.500-2.500-5-5.500-5z"/><circle cx="6" cy="10.500" r="1.600"/><circle cx="9.500" cy="6.500" r="1.600"/><circle cx="14.500" cy="6.500" r="1.600"/><circle cx="18" cy="10.500" r="1.600"/></symbol>
+<symbol id="x-photography" viewBox="0 0 24 24"><path d="M4 8h3l1.500-2.500h7L17 8h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z"/><circle cx="12" cy="13" r="3.500"/></symbol>
+<symbol id="x-cars" viewBox="0 0 24 24"><path d="m4 15 1.600-5.200A2 2 0 0 1 7.500 8.500h9a2 2 0 0 1 1.900 1.300L20 15M3 15h18v3.500H3zM6.500 18.500V20M17.500 18.500V20M7.500 16.800h.01M16.500 16.800h.01"/></symbol>
+<symbol id="x-comedy" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.500"/><path d="M8.500 14a4 4 0 0 0 7 0M9 9.500h.01M15 9.500h.01"/></symbol>
+<symbol id="x-dance" viewBox="0 0 24 24"><circle cx="12" cy="5" r="2"/><path d="M12 7.500v6M12 9.500l-4 2.500M12 9.500l4-1.500M12 13.500l-3.500 6.500M12 13.500l4 2 1 4"/></symbol>
+<symbol id="x-science" viewBox="0 0 24 24"><path d="M9.500 3.500h5M10.500 3.500v6L5 19a1.500 1.500 0 0 0 1.300 2.200h11.400A1.500 1.500 0 0 0 19 19l-5.500-9.500v-6M7.500 15h9"/></symbol>
+<symbol id="x-languages" viewBox="0 0 24 24"><path d="M3.500 6h9M8 4v2M5.500 6c.5 4 3.500 7 6.500 8.500M11 6c-.5 3-3 6-6.500 8M12.500 20l4-9 4 9M14 17h5"/></symbol>
+<symbol id="x-business" viewBox="0 0 24 24"><rect x="3.500" y="7.500" width="17" height="12" rx="2"/><path d="M9 7.500V6a1.500 1.500 0 0 1 1.500-1.500h3A1.500 1.500 0 0 1 15 6v1.500M3.500 12.500h17"/></symbol>
+<symbol id="x-cooking" viewBox="0 0 24 24"><path d="M7 14.500a3.800 3.800 0 0 1-.5-7.500 4.500 4.500 0 0 1 8.800-.5A3.800 3.800 0 0 1 17 14.500V19H7zM7 17h10"/></symbol>
+<symbol id="x-nature" viewBox="0 0 24 24"><path d="M5 19c0-9 5-14 15-14 0 10-5 15-14 15M5 19l8-8"/></symbol>
+<symbol id="x-spirituality" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.500"/><path d="M12 3v2.500M12 18.500V21M3 12h2.500M18.500 12H21M5.600 5.600l1.800 1.800M16.600 16.600l1.800 1.800M5.600 18.400l1.800-1.800M16.600 7.400l1.800-1.800"/></symbol>
 <symbol id="chat-art" viewBox="0 0 440 300">
   <ellipse cx="220" cy="238" rx="200" ry="36" fill="none" stroke="#3a6bff" stroke-opacity=".35" stroke-width="2"/>
   <ellipse cx="220" cy="238" rx="150" ry="26" fill="none" stroke="#7a4bff" stroke-opacity=".5" stroke-width="2"/>
@@ -165,26 +216,41 @@
     </section>
 
     <section id="connect" class="page">
-      <div class="cx-pill cx-count"><svg class="ic"><use href="#i-users"/></svg><span><b id="cxCount">0</b> <span id="cxCountTxt">USERS AVAILABLE</span></span></div>
-      <div class="cx-bar">
-        <button id="cxBack" class="cx-round" aria-label="Back to Home"><svg class="ic"><use href="#i-down"/></svg></button>
-        <button id="cxFilter" class="cx-filter"><svg class="ic"><use href="#i-filter"/></svg><span>Filter</span><svg class="ic cx-lock"><use href="#i-crown"/></svg></button>
-      </div>
-      <div class="cx-card empty" id="cxCard">
-        <div class="cx-who">
-          <div class="cx-ring"><div class="cx-av" id="cxAv">M</div></div>
-          <div class="cx-name"><span id="cxName">Name</span><i class="cx-dot"></i></div>
-          <div class="cx-loc" id="cxLoc"></div>
+      <header class="cx-head">
+        <h1 class="cx-title">Connect</h1>
+        <div class="cx-tools">
+          <button type="button" class="cx-ib" id="cxRecentBtn" aria-label="Recent"><svg class="x"><use href="#x-clock"/></svg></button>
+          <button type="button" class="cx-ib gold" id="cxPrem" aria-label="Premium"><svg class="x"><use href="#x-crown"/></svg></button>
+          <button type="button" class="cx-me fr" id="cxRing" data-frame="neon" aria-label="Edit your card"><span class="cx-av" id="cxAv">M</span><b class="crown-b hidden" id="cxCrown"><svg class="x"><use href="#x-crown"/></svg></b></button>
         </div>
-        <div class="cx-empty">
-          <svg class="ic big"><use href="#i-users"/></svg>
-          <p id="cxEmptyTxt">No one is available right now.</p>
-        </div>
-        <button id="cxReq" class="cx-req">REQUEST</button>
-        <div class="cx-quota" id="cxQuota"></div>
-        <button id="cxSkip" class="cx-skip">Skip</button>
+      </header>
+
+      <div class="cx-deck" id="cxDeck" aria-label="People online"></div>
+
+      <div class="cx-stage">
+        <div class="cx-wave l" aria-hidden="true"></div>
+        <button type="button" class="cx-start" id="cxStart" data-state="idle" aria-label="Start talking">
+          <i class="cx-p1"></i><i class="cx-p2"></i>
+          <span class="cx-disc">
+            <svg class="x cx-mic"><use href="#x-mic"/></svg>
+            <b id="cxStartT">Start<br>Talking</b>
+            <small id="cxStartS">Tap to connect</small>
+          </span>
+        </button>
+        <div class="cx-wave r" aria-hidden="true"></div>
       </div>
-      <div class="cx-pill cx-wait"><svg class="ic"><use href="#i-gift"/></svg><span>WAITING FOR REQUESTS</span></div>
+
+      <div class="cx-filters" id="cxFilters">
+        <button type="button" class="cxf" data-scope="earth"><svg class="x"><use href="#x-globe"/></svg>Earth</button>
+        <button type="button" class="cxf" data-scope="country"><svg class="x"><use href="#x-pin"/></svg>My country</button>
+        <button type="button" class="cxf gold" id="cxFPrem"><svg class="x"><use href="#x-crown"/></svg>Filters</button>
+      </div>
+
+      <div class="cx-quota" id="cxQuotaBox">
+        <svg class="x"><use href="#x-bolt"/></svg>
+        <div class="cx-q-mid"><b id="cxQuotaTxt">5 of 5 connects left today</b><div class="cx-q-bar"><i id="cxQuotaBar"></i></div></div>
+        <button type="button" id="cxUpgrade" class="cx-up">Upgrade</button>
+      </div>
     </section>
 
     <section id="profile" class="page ppage">
@@ -270,7 +336,7 @@
     <input type="file" id="chatImg" accept="image/*" hidden>
   </div>
 
-  <div id="limitModal" class="lim hidden"><div class="lim-card"><p>You can only send up to one message until user accepts</p><button type="button" id="limitOk">CONTINUE</button></div></div>
+  <div id="limitModal" class="lim hidden"><div class="lim-card"><p id="limitTxt">You can only send up to one message until user accepts</p><button type="button" id="limitOk">CONTINUE</button></div></div>
   <div id="reactBar" class="rbar hidden"></div>
   <div id="lightbox" class="lbx hidden"><img id="lbImg" alt=""><video id="lbVid" class="hidden" controls playsinline></video></div>
 
@@ -536,10 +602,14 @@
 
 <div id="cxSheet" class="sheet hidden">
   <div class="panel fs">
-    <h3>Filter</h3>
-    <button type="button" class="fs-toggle" id="fsEarth"><svg class="ic"><use href="#i-earth"/></svg><span><b>Hide Earth users</b><small>People who hide their country</small></span><i class="fs-sw"></i></button>
-    <div class="fs-head"><b>Countries</b><span id="fsSel">All countries</span></div>
-    <input id="fsSearch" class="fs-search" type="search" placeholder="Search a country" autocomplete="off">
+    <h3>Filters</h3>
+    <div class="fs-scope" id="fsScope">
+      <button type="button" data-s="earth"><svg class="x"><use href="#x-globe"/></svg><span>Earth</span></button>
+      <button type="button" data-s="country"><svg class="x"><use href="#x-pin"/></svg><span>My country</span></button>
+    </div>
+    <div class="fs-prem"><svg class="x"><use href="#x-crown"/></svg><b>Premium filters</b><span id="fsSel">Anyone</span></div>
+    <div class="fs-tabs" id="fsTabs"><button type="button" data-t="country" class="on">Country</button><button type="button" data-t="lang">Language</button><button type="button" data-t="interest">Interest</button></div>
+    <input id="fsSearch" class="fs-search" type="search" placeholder="Search" autocomplete="off">
     <div id="fsList" class="fs-list"></div>
     <div class="erow">
       <button type="button" class="pbtn line" id="fsClear">Clear</button>
@@ -548,30 +618,88 @@
   </div>
 </div>
 
+<div id="cardSheet" class="sheet hidden">
+  <form class="panel form cd" id="cardForm" novalidate>
+    <div class="cd-head">
+      <div class="cx-ring fr sm" id="cdRing" data-frame="neon"><span class="cx-av" id="cdAv">M</span><button type="button" class="cd-cam" id="cdPhotoBtn" aria-label="Change photo"><svg class="x"><use href="#x-image"/></svg></button></div>
+      <input type="file" id="cdPhotoIn" accept="image/*" hidden>
+      <div class="cd-who"><b>Your card</b><button type="button" class="cd-views" id="cdViews"><svg class="x feet"><use href="#x-feet"/></svg><span><span id="cdViewN">0</span> views</span><svg class="x g"><use href="#x-crown"/></svg></button></div>
+    </div>
+    <div class="cd-tabs" id="cdTabs"><button type="button" data-t="p" class="on">Profile</button><button type="button" data-t="i">Interests</button><button type="button" data-t="f">Frame</button></div>
+
+    <div class="cd-pane" data-p="p">
+      <input name="display_name" id="cdName" maxlength="30" autocomplete="off" placeholder="Display name">
+      <div class="cpick" id="cdCountry">
+        <button type="button" data-v="real" class="on"><svg class="x"><use href="#x-lock"/></svg><span id="cdReal">Detecting...</span></button>
+        <button type="button" data-v="earth"><svg class="x"><use href="#x-globe"/></svg><span>Earth</span></button>
+      </div>
+      <select id="cdLang" class="cd-sel" aria-label="Language"></select>
+      <div class="cd-seg" id="cdLook"><button type="button" data-v="chat" class="on">Chat</button><button type="button" data-v="friends">Friends</button><button type="button" data-v="language">Language</button></div>
+      <div class="cd-intro"><input name="intro" id="cdIntro" maxlength="60" autocomplete="off" placeholder="One-line intro"><em id="cdIntroN">0/60</em></div>
+    </div>
+    <div class="cd-pane hidden" data-p="i">
+      <p class="cd-sub">Pick up to 5 <em id="cdIntN">0/5</em></p>
+      <div class="cd-ints" id="cdInts"></div>
+    </div>
+    <div class="cd-pane hidden" data-p="f">
+      <p class="cd-sub">Free frames and animated Premium frames</p>
+      <div class="cd-frames" id="cdFrames"></div>
+    </div>
+
+    <p id="cdMsg" class="msg"></p>
+    <div class="erow">
+      <button type="button" class="pbtn line" id="cdCancel">Cancel</button>
+      <button type="submit" class="pbtn main" id="cdSave">Save card</button>
+    </div>
+  </form>
+</div>
+
+<div id="viewersSheet" class="sheet hidden">
+  <div class="panel lpanel">
+    <h3>Who viewed your card</h3>
+    <div id="viewersBody"></div>
+  </div>
+</div>
+
+<div id="recentSheet" class="sheet hidden">
+  <div class="panel lpanel">
+    <h3>Recent</h3>
+    <div id="recentAll"></div>
+  </div>
+</div>
+
 <div id="plans" class="plans hidden">
-  <div class="pl-wrap">
-    <button id="plClose" class="cx-round" aria-label="Close"><svg class="ic"><use href="#i-x"/></svg></button>
-    <div class="pl-hero">
-      <div class="pl-crown"><svg class="ic"><use href="#i-crown"/></svg></div>
-      <h2>MIXO Premium</h2>
-      <p>Meet the people you want, more often.</p>
+  <div class="pl-hero">
+    <img class="pl-boy" src="boy_logo.PNG" alt="" onerror="this.style.display='none'">
+    <button id="plClose" class="pl-x" type="button" aria-label="Close"><svg class="x"><use href="#x-close"/></svg></button>
+    <span class="pl-tag"><svg class="x"><use href="#x-crown"/></svg>PREMIUM</span>
+    <svg class="x pl-deco c" viewBox="0 0 24 24"><use href="#x-crown"/></svg>
+    <svg class="x pl-deco h" viewBox="0 0 24 24"><use href="#x-heart"/></svg>
+    <div class="pl-copy">
+      <h2>Unlock the<br><em>full experience</em></h2>
+      <i class="pl-swoosh"></i>
       <span class="pl-status hidden" id="plStatus"></span>
     </div>
-    <ul class="pl-feat">
-      <li><span class="pl-fi"><svg class="ic"><use href="#i-filter"/></svg></span><span><b>Country filter</b><small>Choose the countries you want to meet</small></span></li>
-      <li><span class="pl-fi"><svg class="ic"><use href="#i-earth"/></svg></span><span><b>Hide Earth users</b><small>Skip people who hide their location</small></span></li>
-      <li><span class="pl-fi"><svg class="ic"><use href="#i-connect"/></svg></span><span><b>20 requests every 5 hours</b><small>Free accounts get 10</small></span></li>
-    </ul>
-    <div class="pl-cards" id="plCards"></div>
-    <div class="pl-cmp">
-      <div class="pl-r pl-h"><span></span><span>Free</span><span>Premium</span></div>
-      <div class="pl-r"><span>Requests / 5 hours</span><span>10</span><span>20</span></div>
-      <div class="pl-r"><span>Country filter</span><span>-</span><span>&#10003;</span></div>
-      <div class="pl-r"><span>Hide Earth users</span><span>-</span><span>&#10003;</span></div>
-    </div>
-    <button id="plGo" class="cx-req">Continue</button>
-    <p class="pl-fine">Prices in US dollars. Cancel anytime.</p>
   </div>
+  <div class="pl-feat">
+    <div class="pl-grid">
+      <div><svg class="x"><use href="#x-inf"/></svg>Unlimited connects</div>
+      <div><svg class="x"><use href="#x-globe"/></svg>Any country</div>
+      <div><svg class="x"><use href="#x-lang"/></svg>Any language</div>
+      <div><svg class="x"><use href="#x-heart"/></svg>Any interest</div>
+      <div class="gold"><svg class="x"><use href="#x-crown"/></svg>Gold crown</div>
+      <div><svg class="x"><use href="#x-bolt"/></svg>Priority matching</div>
+    </div>
+    <ul class="pl-list">
+      <li><svg class="x"><use href="#x-image"/></svg>Animated card frames and call-screen themes</li>
+      <li><svg class="x"><use href="#x-ff"/></svg>Unlimited rematch and skip</li>
+      <li><svg class="x"><use href="#x-eye"/></svg>See who viewed your card</li>
+      <li><svg class="x"><use href="#x-chat"/></svg>Send 3 messages in a request instead of 1</li>
+    </ul>
+  </div>
+  <div class="pl-cards" id="plCards"></div>
+  <button id="plGo" class="pl-go" type="button">CONTINUE WITH YEARLY</button>
+  <p class="pl-fine">Cancel anytime.</p>
 </div>
 
 <div id="callUI" class="callui hidden" data-mode="out">
@@ -580,7 +708,9 @@
     <div class="cl-rings"><i></i><i></i><i></i><div class="cl-av"><div class="iav" id="clAv"></div></div></div>
     <h2 id="clName">User</h2>
     <p id="clStat">Calling...</p>
+    <div class="cl-card hidden" id="clCard"><div class="cl-chips" id="clChips"></div><p id="clIntro"></p></div>
   </div>
+  <button type="button" class="cl-skip hidden" id="clSkip"><svg class="ic"><use href="#i-skip"/></svg>Skip</button>
   <div class="cl-btns in">
     <button type="button" class="cl-b dec" id="clDecline" aria-label="Decline"><svg class="ic"><use href="#i-call"/></svg></button>
     <button type="button" class="cl-b acc" id="clAccept" aria-label="Answer"><svg class="ic"><use href="#i-call"/></svg></button>
@@ -593,7 +723,8 @@
 <audio id="callAudio" autoplay playsinline></audio>
 
 <div id="toast"></div>
+<script src="https://download.agora.io/sdk/release/AgoraRTC_N-4.23.1.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
-<script src="app.js?v=24"></script>
+<script src="app.js?v=27"></script>
 </body>
 </html>

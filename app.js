@@ -153,6 +153,7 @@ function fillProfile() {
   const name = p.display_name || p.username || "Your name";
   paintAvatar($("#pAvatar"), p, p.display_name || p.username);
   $("#pName").textContent = name;
+  if (typeof CX !== "undefined" && CX.premium) $("#pName").insertAdjacentHTML("beforeend", crownHTML("in"));
   $("#pUser").textContent = p.username ? "@" + p.username : "@username";
   $("#pBio").textContent = p.bio || "Add a bio";
   $("#pBio").classList.toggle("hint", !p.bio);
@@ -161,6 +162,7 @@ function fillProfile() {
   const bi = $("#pBannerImg");
   if (p.banner_url) { bi.src = p.banner_url; bi.classList.remove("hidden"); $("#pBanner").classList.add("custom"); }
   else { bi.classList.add("hidden"); $("#pBanner").classList.remove("custom"); }
+  if (typeof cxPaintMe === "function" && typeof CX !== "undefined") cxPaintMe();
 }
 
 function enterApp() {
@@ -169,6 +171,7 @@ function enterApp() {
   fillProfile();
   ensureCountry();
   startInbox();
+  loadPremium();
   loadSocial().finally(() => { renderFeed(); loadMyPosts(); refreshMyStats(); openFromHash(); });
 }
 $("#previewBtn").onclick = enterApp;
@@ -181,6 +184,7 @@ $("#logoutBtn").onclick = async () => {
   $("#feed").innerHTML = "";
   MIXO.user = null;
   MIXO.profile = null;
+  CX.premium = false; CX.until = null; CX.quota = null; CX.recent = []; CX.views = 0; premCache.clear();
   fillProfile();
   $("#app").classList.add("hidden");
   $("#auth").classList.remove("hidden");
@@ -1891,8 +1895,9 @@ chat.reacts = new Map();
 const fmtDur = (s) => Math.floor(s / 60) + ":" + String(Math.round(s % 60)).padStart(2, "0");
 const autoGrow = () => { const t = $("#chatInput"); t.style.height = "46px"; t.style.height = Math.min(Math.max(t.scrollHeight, 46), 120) + "px"; };
 const syncSend = () => $("#chatSend").classList.toggle("mic", !($("#chatInput").value.trim() || vr.rec));
-const iAmLocked = () => { const c = chat.conv, me = meId(); return !!(c && c.initiator === me && c.status !== "accepted" && chat.msgs.some((m) => m.sender_id === me)); };
-const showLimit = () => $("#limitModal").classList.remove("hidden");
+const msgCap = () => (typeof CX !== "undefined" && CX.premium ? 3 : 1);
+const iAmLocked = () => { const c = chat.conv, me = meId(); return !!(c && c.initiator === me && c.status !== "accepted" && chat.msgs.filter((m) => m.sender_id === me).length >= msgCap()); };
+const showLimit = () => { $("#limitTxt").textContent = "You can only send up to " + (msgCap() === 1 ? "one message" : msgCap() + " messages") + " until user accepts"; $("#limitModal").classList.remove("hidden"); };
 $("#limitOk").onclick = () => $("#limitModal").classList.add("hidden");
 const paintOnline = () => {
   const on = !!(chat.open && online.has(chat.uid));
@@ -1933,6 +1938,7 @@ async function openChat(user) {
   chat.open = true;
   $("#chatName").textContent = chat.user.display_name || chat.user.username || "User";
   $("#chatUser").textContent = "@" + (chat.user.username || "user");
+  paintChatCrown(user.id);
   setAv($("#chatAv"), chat.user.avatar_url, chat.user.username);
   $("#chatInput").value = "";
   autoGrow(); syncSend(); paintOnline();
@@ -2183,8 +2189,10 @@ const ICE = { iceServers: [{ urls: ["stun:stun.l.google.com:19302", "stun:stun1.
 const call = { id: null, peer: null, pc: null, stream: null, role: "", state: "idle", t0: 0, tick: 0, ring: 0, queue: [], seen: new Set() };
 const callAudio = $("#callAudio");
 
-function callShow(mode, peerId) {
+function callShow(mode, peerId, info) {
   const p = inbox.profiles.get(peerId) || {};
+  callCard(info || null);
+  $("#clSkip").classList.toggle("hidden", !(mode === "out" && info && info.connect));
   setAv($("#clAv"), p.avatar_url, p.username);
   $("#clName").textContent = p.display_name || p.username || "User";
   $("#callUI").dataset.mode = mode;
@@ -2197,6 +2205,8 @@ const sendSignal = (kind, data) => sb.from("call_signals").insert({ call_id: cal
 const micOpts = { audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } };
 
 function callCleanup() {
+  const prevState = call.state;
+  agoraLeave();
   clearTimeout(call.ring);
   clearInterval(call.tick);
   if (call.pc) { try { call.pc.close(); } catch (e) {} }
@@ -2206,6 +2216,7 @@ function callCleanup() {
   $("#callUI").classList.add("hidden");
   $("#clMute").classList.remove("on");
   cxRetrack();
+  cxAfterCall(prevState);
 }
 async function callEnd(status) {
   const id = call.id;
@@ -2256,7 +2267,7 @@ async function startCall() {
   if (!window.RTCPeerConnection || !navigator.mediaDevices) return toast("Calls aren't supported in this browser.");
   const peer = chat.uid;
   call.state = "starting";
-  try { call.stream = await navigator.mediaDevices.getUserMedia(micOpts); }
+  try { await callMic(); }
   catch (e) { call.state = "idle"; return toast("Allow the microphone to make calls."); }
   const ins = await sb.from("calls").insert({ callee_id: peer }).select().single();
   if (ins.error) { callCleanup(); return toast(callErr(ins.error)); }
@@ -2266,12 +2277,7 @@ async function startCall() {
   call.state = "ringing";
   callShow("out", peer);
   callStat("Calling...");
-  makePc();
-  try {
-    const offer = await call.pc.createOffer();
-    await call.pc.setLocalDescription(offer);
-    await sendSignal("offer", { type: offer.type, sdp: offer.sdp });
-  } catch (e) { toast("Couldn't start the call."); return callEnd("ended"); }
+  try { await callOffer(); } catch (e) { toast("Couldn't start the call."); return callEnd("ended"); }
   call.ring = setTimeout(() => { if (call.state === "ringing") { toast("No answer."); callEnd("missed"); } }, 45000);
 }
 
@@ -2284,12 +2290,19 @@ async function onCallInsert(p) {
   call.id = row.id;
   call.peer = row.caller_id;
   call.role = "callee";
-  if (!inbox.profiles.has(row.caller_id)) {
-    const r = await sb.from("profiles").select("id,username,display_name,avatar_url").eq("id", row.caller_id).maybeSingle();
-    if (r.data) inbox.profiles.set(r.data.id, r.data);
+  let info = null;
+  {
+    let r = await sb.from("profiles").select("id,username,display_name,avatar_url,connect_card,premium_until").eq("id", row.caller_id).maybeSingle();
+    if (r.error) r = await sb.from("profiles").select("id,username,display_name,avatar_url").eq("id", row.caller_id).maybeSingle();
+    if (r.data) {
+      inbox.profiles.set(r.data.id, Object.assign({}, inbox.profiles.get(r.data.id) || {}, r.data));
+      if (r.data.connect_card) { const c = cardOf(r.data); info = { frame: c.frame, prem: isPrem(r.data), int: c.int, intro: c.intro }; }
+      else if (isPrem(r.data)) info = { frame: "neon", prem: true, int: [], intro: "" };
+    }
   }
   if (call.id !== row.id) return;
-  callShow("in", row.caller_id);
+  callShow("in", row.caller_id, info);
+  if (info) sb.rpc("record_card_view", { p_owner: row.caller_id });
   callStat("Incoming voice call");
   if (navigator.vibrate) navigator.vibrate([300, 200, 300, 200, 300]);
   call.ring = setTimeout(() => { if (call.state === "incoming") callCleanup(); }, 45000);
@@ -2299,8 +2312,9 @@ function onCallUpdate(p) {
   if (!row || row.id !== call.id) return;
   if (["declined", "busy", "ended", "missed"].includes(row.status)) {
     const live = call.state === "live";
-    if (row.status === "declined") toast("Call declined.");
-    else if (row.status === "busy") toast("They're on another call.");
+    const auto = CX && CX.state === "calling";
+    if (row.status === "declined") { if (!auto) toast("Call declined."); }
+    else if (row.status === "busy") { if (!auto) toast("They're on another call."); }
     else if (row.status === "ended" && live) toast("Call ended.");
     callCleanup();
   } else if (row.status === "active" && call.role === "caller" && call.state !== "live") callStat("Connecting...");
@@ -2314,8 +2328,16 @@ $("#clAccept").onclick = async () => {
   if (call.state !== "incoming") return;
   clearTimeout(call.ring);
   call.state = "answering";
-  try { call.stream = await navigator.mediaDevices.getUserMedia(micOpts); }
+  try { await callMic(); }
   catch (e) { toast("Allow the microphone to answer."); return callEnd("declined"); }
+  if (callProvider() === "agora") {
+    try { await agoraJoin(); } catch (e) { toast("Couldn't answer the call."); return callEnd("ended"); }
+    await sb.from("calls").update({ status: "active", answered_at: new Date().toISOString() }).eq("id", call.id);
+    call.state = "connecting";
+    $("#callUI").dataset.mode = "live";
+    callStat("Connecting...");
+    return;
+  }
   makePc();
   const sigs = await sb.from("call_signals").select("*").eq("call_id", call.id).order("id");
   const rows = sigs.data || [];
@@ -2334,11 +2356,12 @@ $("#clAccept").onclick = async () => {
   callStat("Connecting...");
 };
 $("#clDecline").onclick = () => callEnd("declined");
-$("#clHang").onclick = () => callEnd(call.state === "ringing" ? "missed" : "ended");
+$("#clHang").onclick = () => { CX.next = false; callEnd(call.state === "ringing" ? "missed" : "ended"); };
 $("#clMute").onclick = () => {
-  if (!call.stream) return;
+  if (!call.stream && !ag.track) return;
   const on = $("#clMute").classList.toggle("on");
-  call.stream.getAudioTracks().forEach((t) => { t.enabled = !on; });
+  if (ag.track) ag.track.setEnabled(!on);
+  if (call.stream) call.stream.getAudioTracks().forEach((t) => { t.enabled = !on; });
 };
 
 // ----- header buttons -----
@@ -2427,7 +2450,7 @@ function startInbox() {
     .on("postgres_changes", { event: "*", schema: "public", table: "message_reactions" }, onReactEvent)
     .subscribe((s) => { rtOK = s === "SUBSCRIBED"; });
   presCh = sb.channel("mixo-online", { config: { presence: { key: meId() } } });
-  presCh.on("presence", { event: "sync" }, () => { online = new Set(Object.keys(presCh.presenceState())); paintOnline(); })
+  presCh.on("presence", { event: "sync" }, () => { online = new Set(Object.keys(presCh.presenceState())); paintOnline(); if (typeof cxRenderRecent === "function") cxRenderRecent(); })
     .subscribe(async (s) => { if (s === "SUBSCRIBED") await presCh.track({ at: Date.now() }); });
   callCh = sb.channel("calls-" + meId())
     .on("postgres_changes", { event: "INSERT", schema: "public", table: "calls" }, onCallInsert)
@@ -2743,18 +2766,35 @@ $("#cGrid").addEventListener("click", (e) => {
 });
 
 
-// ============ CONNECT: meet someone new by voice + MIXO Premium ============
-// Payments: paste your Stripe Payment Links here (one per plan). Until then the plan screen shows
-// "Payments aren't connected yet". Premium itself is stored in the premium_users table (see mixo_connect.sql).
+// ============ CONNECT: swipe through people online, Start Talking, your card, filters + MIXO Premium ============
+// Voice calls run on Agora. Paste your Agora App ID below (console.agora.io -> Project -> App ID).
+// Token function: deploy supabase/functions/agora-token (included) so calls stay secure. If you leave
+// App ID empty, calls fall back to the old peer-to-peer WebRTC.
+var AGORA = { appId: "", tokenFn: "agora-token" };
+// Payments: paste your Stripe Payment Links here (one per plan). Premium itself lives in premium_users.
 var PAY_LINKS = { weekly: "", monthly: "", yearly: "" };
 var PLANS = [
-  { id: "weekly", name: "Weekly", price: 5, per: "week", note: "Try it out" },
-  { id: "monthly", name: "Monthly", price: 19, per: "month", note: "Billed every month", badge: "MOST POPULAR" },
-  { id: "yearly", name: "Yearly", price: 230, per: "year", note: "Works out at $19.17 / month" },
+  { id: "weekly", name: "Weekly", price: "2.99", sub: "No discount" },
+  { id: "monthly", name: "Monthly", price: "7.99", save: "Save 38%" },
+  { id: "yearly", name: "Yearly", price: "49.99", sub: "About $4.17 a month", save: "Save 68%", note: "48% cheaper than monthly", badge: "BEST VALUE" },
 ];
-var PL = { sel: "monthly" };
+var PL = { sel: "yearly" };
+var FREE_CONNECTS = 5, FREE_SKIPS = 3, MAX_INTERESTS = 5;
 
-// every country name (English), used by the filter and for flags
+var FRAMES = [{"id": "neon", "name": "Neon", "premium": false, "anim": "static"}, {"id": "aqua", "name": "Aqua", "premium": false, "anim": "static"}, {"id": "rose", "name": "Rose", "premium": false, "anim": "static"}, {"id": "aurora", "name": "Aurora", "premium": true, "anim": "spin"}, {"id": "gold", "name": "Gold", "premium": true, "anim": "spin"}, {"id": "inferno", "name": "Inferno", "premium": true, "anim": "spin"}, {"id": "ocean", "name": "Ocean", "premium": true, "anim": "spin"}, {"id": "galaxy", "name": "Galaxy", "premium": true, "anim": "spin"}, {"id": "candy", "name": "Candy", "premium": true, "anim": "spin"}, {"id": "matrix", "name": "Matrix", "premium": true, "anim": "spin"}, {"id": "lava", "name": "Lava", "premium": true, "anim": "pulse"}, {"id": "rainbow", "name": "Rainbow", "premium": true, "anim": "spin"}, {"id": "diamond", "name": "Diamond", "premium": true, "anim": "pulse"}, {"id": "sakura", "name": "Sakura", "premium": true, "anim": "pulse"}, {"id": "glitch", "name": "Glitch", "premium": true, "anim": "hue"}];
+// every interest has its own hand-drawn icon (#x-<id> in index.html)
+var INTERESTS = [["gaming","Gaming"],["music","Music"],["adventures","Adventures"],["movies","Movies"],["sports","Sports"],["fitness","Fitness"],["travel","Travel"],["food","Food"],["art","Art"],["tech","Tech"],["books","Books"],["anime","Anime"],["fashion","Fashion"],["pets","Pets"],["photography","Photo"],["cars","Cars"],["comedy","Comedy"],["dance","Dance"],["science","Science"],["languages","Languages"],["business","Business"],["cooking","Cooking"],["nature","Nature"],["spirituality","Mindful"]];
+var LANG_CODES = ["en","es","fr","de","pt","it","ru","ar","hi","bn","ur","zh","ja","ko","tr","id","vi","th","fa","nl","pl","sv","uk","ro","el","he","sw","ta","te","mr","pa","ms","fil","cs","hu"];
+var LOOKING = { chat: "Chat", friends: "Friends", language: "Language" };
+
+var svgI = (id) => `<svg class="x"><use href="#x-${id}"/></svg>`;
+var intName = (id) => { const x = INTERESTS.find((i) => i[0] === id); return x ? x[1] : id; };
+var intChip = (id) => `<span class="chip">${svgI(id)}${esc(intName(id))}</span>`;
+var langName = (c) => { try { return new Intl.DisplayNames(["en"], { type: "language" }).of(c) || c; } catch (e) { return c; } };
+var myLang = () => (navigator.language || "en").split("-")[0].toLowerCase();
+var crownHTML = (cls) => `<b class="crown-b ${cls || "in"}"><svg class="x"><use href="#x-crown"/></svg></b>`;
+
+// every country name (English); the filter shows the two-letter code instead of a flag emoji
 var CC = (function () {
   const m = new Map();
   try {
@@ -2767,29 +2807,64 @@ var CC = (function () {
   } catch (e) {}
   return m;
 })();
-const flagOf = (name) => { const c = CC.get(name); return c ? String.fromCodePoint(...[...c].map((ch) => 127397 + ch.charCodeAt(0))) : ""; };
 
+// ---------- card data ----------
+function cardOf(p) {
+  const c = (p && p.connect_card) || {};
+  return {
+    int: Array.isArray(c.int) ? c.int.filter((x) => INTERESTS.some((i) => i[0] === x)).slice(0, MAX_INTERESTS) : [],
+    look: LOOKING[c.look] ? c.look : "chat",
+    intro: String(c.intro || "").slice(0, 60),
+    frame: c.frame || "neon",
+    lang: c.lang || "",
+  };
+}
+function paintFrame(el, id, prem) {
+  if (!el) return;
+  const f = FRAMES.find((x) => x.id === id);
+  const use = !f || (f.premium && !prem) ? FRAMES[0] : f;
+  el.dataset.frame = use.id;
+  el.dataset.anim = use.anim === "static" ? "" : use.anim;
+}
+const isPrem = (p) => !!(p && p.premium_until && new Date(p.premium_until) > new Date());
+const premCache = new Map();
+async function premiumOf(uid) {
+  if (!uid) return false;
+  if (uid === meId()) return CX.premium;
+  if (premCache.has(uid)) return premCache.get(uid);
+  let v = false;
+  try {
+    const r = await sb.from("profiles").select("premium_until").eq("id", uid).maybeSingle();
+    v = !r.error && isPrem(r.data);
+  } catch (e) {}
+  premCache.set(uid, v);
+  return v;
+}
+async function paintChatCrown(uid) {
+  const prem = await premiumOf(uid);
+  if (!prem || chat.uid !== uid) return;
+  const n = $("#chatName");
+  if (n && !$(".crown-b", n)) n.insertAdjacentHTML("beforeend", crownHTML("in chat-crown"));
+}
+
+// ---------- state ----------
 function cxLoadFilt() {
   try {
-    const j = JSON.parse(localStorage.getItem("mixo_cx_filter") || "null");
-    if (j) return { countries: Array.isArray(j.countries) ? j.countries : [], hideEarth: !!j.hideEarth };
+    const j = JSON.parse(localStorage.getItem("mixo_cx_filter2") || "null");
+    if (j) return { scope: j.scope === "country" ? "country" : "earth", countries: j.countries || [], langs: j.langs || [], interests: j.interests || [] };
   } catch (e) {}
-  return { countries: [], hideEarth: false };
+  return { scope: "earth", countries: [], langs: [], interests: [] };
 }
-var CX = { ch: null, all: [], pool: [], cur: null, filt: cxLoadFilt(), premium: false, until: null, quota: null, busy: false, tick: 0 };
+var CX = { ch: null, all: [], pool: [], deck: [], passed: new Set(), filt: cxLoadFilt(), premium: false, until: null, quota: null, state: "idle", tried: new Map(), t0: 0, next: true, busy: false, searchT: 0, tick: 0, recent: [], views: 0, init: false };
+var ag = { client: null, track: null };
 
-const cxLimit = () => (CX.quota ? CX.quota.limit : CX.premium ? 20 : 10);
-function cxWait(iso) {
-  const ms = new Date(iso) - Date.now();
-  if (!(ms > 0)) return "";
-  const h = Math.floor(ms / 3600000), m = Math.ceil((ms % 3600000) / 60000);
-  return h ? h + "h " + m + "m" : m + "m";
+const cxFiltCustom = () => CX.premium && !!(CX.filt.countries.length || CX.filt.langs.length || CX.filt.interests.length);
+function cxTrack() {
+  const p = MIXO.profile || {}, c = cardOf(p);
+  return CX.ch && CX.ch.track({ id: meId(), u: p.username || "", n: p.display_name || p.username || "", a: p.avatar_url || "", c: p.country || "", busy: call.state !== "idle",
+    p: CX.premium ? 1 : 0, i: c.int, l: c.lang || myLang(), f: c.frame, t: c.intro });
 }
 function cxRetrack() { if (CX && CX.ch) cxTrack(); }
-function cxTrack() {
-  const p = MIXO.profile || {};
-  return CX.ch && CX.ch.track({ id: meId(), u: p.username || "", n: p.display_name || p.username || "", a: p.avatar_url || "", c: p.country || "", busy: call.state !== "idle" });
-}
 
 async function loadPremium() {
   CX.premium = false; CX.until = null;
@@ -2797,34 +2872,54 @@ async function loadPremium() {
     const r = await sb.from("premium_users").select("plan,premium_until").eq("user_id", meId()).maybeSingle();
     if (r.data && new Date(r.data.premium_until) > new Date()) { CX.premium = true; CX.until = r.data.premium_until; }
   }
+  fillProfile();
   cxApply();
+  cxRetrack();
 }
 async function loadQuota() {
   if (!sb || !MIXO.user) return;
-  const r = await sb.rpc("connect_quota");
+  const r = await sb.rpc("connect_quota2");
   CX.quota = r.error ? null : r.data;
   cxRenderQuota();
 }
 
-function connectEnter() {
-  if (!CX) return;
-  cxRender();
-  if (!sb || !MIXO.user) return;
-  loadPremium();
-  loadQuota();
-  clearInterval(CX.tick);
-  CX.tick = setInterval(() => { if (CX.quota && CX.quota.resets_at && new Date(CX.quota.resets_at) < new Date()) loadQuota(); else cxRenderQuota(); }, 30000);
-  if (CX.ch) return;
-  CX.ch = sb.channel("mixo-connect", { config: { presence: { key: meId() } } });
-  CX.ch.on("presence", { event: "sync" }, cxSync).subscribe(async (s) => { if (s === "SUBSCRIBED") await cxTrack(); });
+// ---------- paint: top-right circle (your card), start button, filters, quota ----------
+function cxPaintMe() {
+  if (!$("#cxRing")) return;
+  const p = MIXO.profile || {}, c = cardOf(p);
+  setAv($("#cxAv"), p.avatar_url, p.display_name || p.username);
+  $("#cxCrown").classList.toggle("hidden", !CX.premium);
+  paintFrame($("#cxRing"), c.frame, CX.premium);
 }
-function connectLeave() {
-  if (!CX) return;
-  clearInterval(CX.tick);
-  if (CX.ch && sb) { try { sb.removeChannel(CX.ch); } catch (e) {} }
-  CX.ch = null; CX.all = []; CX.pool = []; CX.cur = null;
+const START_TXT = {
+  idle: ["Start<br>Talking", "Tap to connect"],
+  searching: ["Searching...", "Tap to cancel"],
+  calling: ["Calling...", "Tap to cancel"],
+};
+function cxPaintStart() {
+  const b = $("#cxStart");
+  if (!b) return;
+  b.dataset.state = CX.state;
+  $("#cxStartT").innerHTML = START_TXT[CX.state][0];
+  $("#cxStartS").innerHTML = START_TXT[CX.state][1];
+}
+function cxPaintFilters() {
+  const custom = cxFiltCustom();
+  $$("#cxFilters [data-scope]").forEach((b) => b.classList.toggle("on", !custom && CX.filt.scope === b.dataset.scope));
+  $("#cxFPrem").classList.toggle("on", custom);
+}
+function cxRenderQuota() {
+  const box = $("#cxQuotaBox");
+  if (!box) return;
+  box.classList.toggle("pro", CX.premium);
+  if (CX.premium) { $("#cxQuotaTxt").innerHTML = "<em>Unlimited</em> connects"; $("#cxQuotaBar").style.width = "100%"; return; }
+  const lim = CX.quota && CX.quota.limit ? CX.quota.limit : FREE_CONNECTS;
+  const used = CX.quota ? CX.quota.used : 0, left = Math.max(0, lim - used);
+  $("#cxQuotaTxt").innerHTML = `<em>${left}</em> of ${lim} connects left today`;
+  $("#cxQuotaBar").style.width = Math.round((left / lim) * 100) + "%";
 }
 
+// ---------- presence + filtering ----------
 function cxSync() {
   if (!CX.ch) return;
   const st = CX.ch.presenceState();
@@ -2832,143 +2927,530 @@ function cxSync() {
     .filter((m) => m && m.id && !m.busy && !social.blocked.has(m.id));
   cxApply();
 }
-function cxApply() {
-  const f = CX.premium ? CX.filt : { countries: [], hideEarth: false };
-  CX.pool = CX.all.filter((m) => (!f.hideEarth || m.c !== "Earth") && (!f.countries.length || f.countries.includes(m.c)));
-  if (!CX.cur || !CX.pool.some((m) => m.id === CX.cur.id)) CX.cur = CX.pool.length ? CX.pool[Math.floor(Math.random() * CX.pool.length)] : null;
-  cxRender();
-}
-
-var cxShown = "";
-function cxRender() {
-  const loggedIn = !!(sb && MIXO.user);
-  const n = CX.pool.length, m = CX.cur;
-  $("#cxCount").textContent = n;
-  $("#cxCountTxt").textContent = n === 1 ? "USER AVAILABLE" : "USERS AVAILABLE";
-  $("#cxCard").classList.toggle("empty", !m);
-  if (m) {
-    setAv($("#cxAv"), m.a, m.n || m.u);
-    $("#cxName").textContent = m.n || m.u || "User";
-    const earth = m.c === "Earth";
-    $("#cxLoc").innerHTML = m.c ? `<svg class="ic${earth ? " earth" : ""}"><use href="#i-${earth ? "earth" : "pin"}"/></svg><span>${esc(m.c)}</span>` : "";
-    if (cxShown !== m.id) {
-      cxShown = m.id;
-      const c = $("#cxCard"); c.classList.remove("swap"); void c.offsetWidth; c.classList.add("swap");
-    }
-  } else {
-    cxShown = "";
-    $("#cxEmptyTxt").innerHTML = !loggedIn ? "Log in to meet new people."
-      : CX.all.length ? "No one matches your filter.<br>Try changing it."
-      : "No one is available right now.<br>Stay here, people join all the time.";
+function cxPass(m) {
+  const f = CX.filt;
+  if (cxFiltCustom()) {
+    if (f.countries.length && !f.countries.includes(m.c)) return false;
+    if (f.langs.length && !f.langs.includes(m.l)) return false;
+    if (f.interests.length && !(m.i || []).some((x) => f.interests.includes(x))) return false;
+    return true;
   }
-  $("#cxFilter").classList.toggle("active", !!(CX.premium && (CX.filt.countries.length || CX.filt.hideEarth)));
-  $("#cxFilter .cx-lock").classList.toggle("hidden", CX.premium);
-  cxRenderQuota();
+  if (f.scope === "country") {
+    const p = MIXO.profile || {}, mine = p.real_country || p.country;
+    return !!m.c && m.c !== "Earth" && m.c === mine;
+  }
+  return true;
 }
-function cxRenderQuota() {
-  const el = $("#cxQuota");
-  if (!sb || !MIXO.user) { el.textContent = ""; return; }
-  const lim = cxLimit(), used = CX.quota ? CX.quota.used : 0, left = Math.max(0, lim - used);
-  const wait = CX.quota && used > 0 && CX.quota.resets_at ? cxWait(CX.quota.resets_at) : "";
-  el.textContent = left + " of " + lim + " requests left" + (wait ? " · next one back in " + wait : "");
-}
-function cxSkip() {
-  if (CX.pool.length < 2) return;
-  let n;
-  do { n = CX.pool[Math.floor(Math.random() * CX.pool.length)]; } while (n.id === CX.cur.id);
-  CX.cur = n;
-  cxRender();
+function cxApply() {
+  CX.pool = CX.all.filter(cxPass);
+  cxPaintFilters();
+  cxDeckSync();
+  if (CX.state === "searching") cxSearch();
 }
 
-async function cxRequest() {
-  const m = CX.cur;
-  if (!m || CX.busy) return;
+// ---------- the swipe deck: people online ----------
+// Order stays put while you swipe; new people join at the end (Premium members go to the front of the unseen ones).
+function cxDeckSync() {
+  const ids = new Set(CX.pool.map((m) => m.id));
+  const byId = new Map(CX.pool.map((m) => [m.id, m]));
+  let deck = CX.deck.filter((m) => ids.has(m.id)).map((m) => byId.get(m.id));
+  const have = new Set(deck.map((m) => m.id));
+  const fresh = CX.pool.filter((m) => !have.has(m.id)).sort((a, b) => (b.p | 0) - (a.p | 0));
+  deck = deck.concat(fresh);
+  const same = deck.length === CX.deck.length && deck.every((m, i) => m.id === CX.deck[i].id && m.p === CX.deck[i].p && m.f === CX.deck[i].f && m.t === CX.deck[i].t);
+  CX.deck = deck;
+  if (!same || !$("#cxDeck").children.length) cxRenderDeck();
+}
+function personCard(m, idx) {
+  const earth = !m.c || m.c === "Earth";
+  const passed = CX.passed.has(m.id);
+  return `<article class="pc${passed ? " passed" : ""}" data-id="${esc(m.id)}" data-i="${idx}">
+    <div class="pc-top"><div class="cx-ring fr" data-frame="${esc(m.f || "neon")}"><span class="cx-av">${m.a ? `<img src="${esc(m.a)}" alt="">` : esc((m.n || "?")[0].toUpperCase())}</span></div>
+      <div class="pc-info"><div class="pc-name"><span>${esc(m.n || m.u || "User")}</span>${m.p ? crownHTML("in") : ""}</div>
+      <div class="pc-loc">${svgI(earth ? "globe" : "pin")}<span>${esc(earth ? "Worldwide" : m.c)}</span></div></div></div>
+    <div class="pc-chips">${(m.i || []).slice(0, 3).map(intChip).join("")}</div>
+    <p class="pc-intro">${m.t ? "\u201c" + esc(m.t) + "\u201d" : ""}</p>
+    <button type="button" class="pc-call" data-a="call">${passed && !CX.premium ? svgI("lock") + "Premium to call" : svgI("phone") + "Call"}</button></article>`;
+}
+function cxRenderDeck() {
+  const box = $("#cxDeck");
+  if (!box) return;
+  const keep = box.scrollLeft;
+  box.innerHTML = CX.deck.length ? CX.deck.map(personCard).join("")
+    : `<article class="pc empty"><div class="radar">${svgI("globe")}</div><b>No one online yet</b><span>Tap Start Talking and we'll<br>find someone for you.</span></article>`;
+  CX.deck.forEach((m, i) => { const el = box.children[i]; if (el) { const r = el.querySelector(".cx-ring"); paintFrame(r, m.f, !!m.p); } });
+  box.scrollLeft = keep;
+}
+// people you swipe past become "passed": calling them again needs Premium
+function cxDeckScrolled() {
+  const box = $("#cxDeck");
+  if (!box || !CX.deck.length) return;
+  const first = box.children[0], second = box.children[1];
+  const step = second ? second.offsetLeft - first.offsetLeft : first.offsetWidth;
+  const i = Math.max(0, Math.min(CX.deck.length - 1, Math.round(box.scrollLeft / Math.max(1, step))));
+  let changed = false;
+  for (let k = 0; k < i; k++) if (!CX.passed.has(CX.deck[k].id)) { CX.passed.add(CX.deck[k].id); changed = true; }
+  if (!changed) return;
+  [...box.children].forEach((el) => {
+    const passed = CX.passed.has(el.dataset.id);
+    el.classList.toggle("passed", passed);
+    const b = el.querySelector(".pc-call");
+    if (b) b.innerHTML = passed && !CX.premium ? svgI("lock") + "Premium to call" : svgI("phone") + "Call";
+  });
+}
+async function cxDeckClick(e) {
+  const b = e.target.closest('[data-a="call"]'), card = e.target.closest(".pc");
+  if (!b || !card) return;
+  const m = CX.deck.find((x) => x.id === card.dataset.id);
+  if (!m) return;
+  if (CX.passed.has(m.id) && !CX.premium) return openPlans("back");
+  if (CX.state !== "idle") return toast("Finish this call first.");
   if (!sb || !MIXO.user) return toast("Log in to connect.");
   if (call.state !== "idle") return toast("You're already in a call.");
   if (!window.RTCPeerConnection || !navigator.mediaDevices) return toast("Calls aren't supported in this browser.");
-  if (CX.quota && CX.quota.used >= CX.quota.limit) return cxLimitHit();
+  await loadQuota();
+  if (!CX.premium && CX.quota && CX.quota.limit && CX.quota.used >= CX.quota.limit) return cxLimitHit();
+  CX.tried = new Map(); CX.next = false; CX.t0 = Date.now(); CX.state = "searching";
+  cxPaintStart();
+  cxCall(m);
+}
+
+// ---------- enter / leave the page ----------
+function cxInitOnce() {
+  if (CX.init || !$("#cxStart")) return;
+  CX.init = true;
+  const L = [10, 16, 24, 34, 46, 60], mk = (a) => a.map((h, i) => `<i style="height:${h}px;animation-delay:${(i * 0.13).toFixed(2)}s"></i>`).join("");
+  $(".cx-wave.l").innerHTML = mk(L);
+  $(".cx-wave.r").innerHTML = mk(L.slice().reverse());
+  let raf = 0;
+  $("#cxDeck").addEventListener("scroll", () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(cxDeckScrolled); }, { passive: true });
+  $("#cxDeck").addEventListener("click", cxDeckClick);
+}
+function connectEnter() {
+  if (!CX) return;
+  cxInitOnce();
+  cxPaintMe(); cxPaintStart(); cxPaintFilters(); cxRenderQuota(); cxDeckSync();
+  if (!sb || !MIXO.user) return;
+  loadPremium();
+  loadQuota();
+  loadRecent();
+  loadViewCount();
+  clearInterval(CX.tick);
+  CX.tick = setInterval(() => { if (CX.quota && CX.quota.resets_at && new Date(CX.quota.resets_at) < new Date()) loadQuota(); }, 30000);
+  if (CX.ch) return;
+  CX.ch = sb.channel("mixo-connect", { config: { presence: { key: meId() } } });
+  CX.ch.on("presence", { event: "sync" }, cxSync).subscribe(async (s) => { if (s === "SUBSCRIBED") await cxTrack(); });
+}
+function connectLeave() {
+  if (!CX) return;
+  clearInterval(CX.tick);
+  clearTimeout(CX.searchT);
+  CX.next = false;
+  if (CX.state === "searching") { CX.state = "idle"; cxPaintStart(); }
+  if (CX.ch && sb) { try { sb.removeChannel(CX.ch); } catch (e) {} }
+  CX.ch = null; CX.all = []; CX.pool = []; CX.deck = []; CX.passed = new Set();
+}
+
+// ---------- START TALKING: find someone online and ring them ----------
+async function cxStartTap() {
+  if (CX.state !== "idle") return cxCancel();
+  if (!sb || !MIXO.user) return toast("Log in to connect.");
+  if (call.state !== "idle") return toast("You're already in a call.");
+  if (!window.RTCPeerConnection || !navigator.mediaDevices) return toast("Calls aren't supported in this browser.");
+  await loadQuota();
+  if (!CX.premium && CX.quota && CX.quota.limit && CX.quota.used >= CX.quota.limit) return cxLimitHit();
+  CX.tried = new Map(); CX.next = true; CX.t0 = Date.now(); CX.state = "searching";
+  cxPaintStart();
+  cxSearch();
+}
+function cxCancel() {
+  clearTimeout(CX.searchT);
+  CX.next = false;
+  const wasCalling = CX.state === "calling";
+  CX.state = "idle";
+  cxPaintStart();
+  if (wasCalling && (call.state === "ringing" || call.state === "starting")) callEnd("missed");
+}
+function cxSearch() {
+  clearTimeout(CX.searchT);
+  if (CX.state !== "searching" || CX.busy || !CX.next) return;
+  if (Date.now() - CX.t0 > 90000) { CX.state = "idle"; cxPaintStart(); return toast("No one is available right now. Try again soon."); }
+  const now = Date.now();
+  const list = CX.pool.filter((m) => !(CX.tried.get(m.id) > now - 60000))
+    .map((m) => ({ m, r: Math.random() })).sort((a, b) => ((b.m.p | 0) - (a.m.p | 0)) || a.r - b.r).map((x) => x.m);   // Premium members are matched first
+  if (!list.length) { CX.searchT = setTimeout(cxSearch, 2500); return; }
+  cxCall(list[0]);
+}
+async function cxCall(m) {
+  if (CX.busy) return;
   CX.busy = true;
+  CX.tried.set(m.id, Date.now());
   call.state = "starting";
-  try { call.stream = await navigator.mediaDevices.getUserMedia(micOpts); }
-  catch (e) { call.state = "idle"; CX.busy = false; return toast("Allow the microphone to make calls."); }
-  const r = await sb.rpc("connect_request", { p_callee: m.id });
+  try { await callMic(); }
+  catch (e) { call.state = "idle"; CX.busy = false; CX.state = "idle"; cxPaintStart(); return toast("Allow the microphone to make calls."); }
+  const r = await sb.rpc("connect_request2", { p_callee: m.id });
   if (r.error) {
     callCleanup(); CX.busy = false;
     const msg = r.error.message || "";
-    if (/call_limit/.test(msg)) { await loadQuota(); return cxLimitHit(); }
-    return toast(/does not exist|schema cache|could not find/i.test(msg) ? "Run mixo_connect.sql in Supabase first." : "Couldn't send the request.");
+    if (/call_limit/.test(msg)) { CX.state = "idle"; cxPaintStart(); await loadQuota(); return cxLimitHit(); }
+    if (/blocked|slow down/i.test(msg) && CX.next) { CX.state = "searching"; cxPaintStart(); CX.searchT = setTimeout(cxSearch, 1500); return; }
+    CX.state = "idle"; cxPaintStart();
+    return toast(/does not exist|schema cache|could not find/i.test(msg) ? "Run mixo_connect2.sql in Supabase first." : "Couldn't start the call.");
   }
-  CX.quota = { used: r.data.used, limit: r.data.limit, resets_at: r.data.resets_at };
-  cxRenderQuota();
-  call.id = r.data.call_id;
-  call.peer = m.id;
-  call.role = "caller";
-  call.state = "ringing";
+  if (CX.state !== "searching") { // cancelled while we were setting up
+    CX.busy = false;
+    await sb.from("calls").update({ status: "missed", ended_at: new Date().toISOString() }).eq("id", r.data.call_id);
+    return callCleanup();
+  }
+  CX.state = "calling";
+  cxPaintStart();
+  CX.quota = Object.assign({}, CX.quota || {}, { limit: r.data.limit, used: r.data.used, resets_at: r.data.resets_at });
+  call.id = r.data.call_id; call.peer = m.id; call.role = "caller"; call.state = "ringing";
   inbox.profiles.set(m.id, { id: m.id, username: m.u, display_name: m.n, avatar_url: m.a });
-  callShow("out", m.id);
-  callStat("Calling...");
-  makePc();
-  try {
-    const offer = await call.pc.createOffer();
-    await call.pc.setLocalDescription(offer);
-    await sendSignal("offer", { type: offer.type, sdp: offer.sdp });
-  } catch (e) { CX.busy = false; toast("Couldn't start the call."); return callEnd("ended"); }
+  callShow("out", m.id, { frame: m.f, prem: !!m.p, int: m.i || [], intro: m.t || "", connect: CX.next });
+  callStat("Connecting you...");
+  sb.rpc("record_card_view", { p_owner: m.id });
+  try { await callOffer(); }
+  catch (e) { CX.busy = false; toast("Couldn't start the call."); return callEnd("ended"); }
   CX.busy = false;
-  call.ring = setTimeout(() => { if (call.state === "ringing") { toast("No answer."); callEnd("missed"); } }, 45000);
+  call.ring = setTimeout(() => { if (call.state === "ringing") callEnd("missed"); }, 20000);
 }
-function cxLimitHit() {
-  if (CX.premium) {
-    const w = CX.quota && CX.quota.resets_at ? cxWait(CX.quota.resets_at) : "";
-    toast("You've used all your requests." + (w ? " Another one frees up in " + w + "." : ""));
-  } else openPlans("limit");
+// runs from callCleanup: decide what happens after a Connect call stops
+function cxAfterCall(prev) {
+  if (!CX || CX.state !== "calling") return;
+  if (prev === "live") { CX.state = "idle"; cxPaintStart(); loadQuota(); loadRecent(); return; }
+  if (CX.next) { CX.state = "searching"; cxPaintStart(); clearTimeout(CX.searchT); CX.searchT = setTimeout(cxSearch, 600); }
+  else { CX.state = "idle"; cxPaintStart(); }
+}
+function cxLimitHit() { openPlans("limit"); }
+
+// skip + rematch: Premium is unlimited, free members get a few a day
+function cxSkipAllowed() {
+  if (CX.premium) return true;
+  const d = new Date().toDateString();
+  let s = { d, n: 0 };
+  try { const j = JSON.parse(localStorage.getItem("mixo_skips") || "null"); if (j && j.d === d) s = j; } catch (e) {}
+  if (s.n >= FREE_SKIPS) return false;
+  s.n++;
+  try { localStorage.setItem("mixo_skips", JSON.stringify(s)); } catch (e) {}
+  return true;
+}
+$("#clSkip").onclick = () => {
+  if (CX.state !== "calling" || call.state !== "ringing") return;
+  if (!cxSkipAllowed()) return openPlans("skip");
+  CX.next = true;
+  callEnd("missed");
+};
+
+// ---------- call screen: card strip, frame, crown ----------
+function callCard(info) {
+  const box = $("#clCard"), av = $(".cl-av");
+  av.querySelectorAll(".crown-b").forEach((x) => x.remove());
+  av.classList.add("fr");
+  paintFrame(av, info && info.frame, !!(info && info.prem));
+  if (!info) { box.classList.add("hidden"); return; }
+  if (info.prem) av.insertAdjacentHTML("beforeend", crownHTML(""));
+  const has = (info.int && info.int.length) || info.intro;
+  box.classList.toggle("hidden", !has);
+  $("#clChips").innerHTML = (info.int || []).slice(0, 3).map((id) => `<span>${esc(intName(id))}</span>`).join("");
+  $("#clIntro").textContent = info.intro ? "\u201c" + info.intro + "\u201d" : "";
 }
 
-// ---------- filter (Premium) ----------
-var FS = { countries: new Set(), hideEarth: false, q: "" };
+// ---------- AGORA (real voice) ----------
+const callProvider = () => (AGORA.appId && window.AgoraRTC ? "agora" : "webrtc");
+async function callMic() {
+  if (callProvider() === "agora") ag.track = await AgoraRTC.createMicrophoneAudioTrack({ AEC: true, ANS: true, AGC: true });
+  else call.stream = await navigator.mediaDevices.getUserMedia(micOpts);
+}
+async function callOffer() {
+  if (callProvider() === "agora") return agoraJoin();
+  makePc();
+  const offer = await call.pc.createOffer();
+  await call.pc.setLocalDescription(offer);
+  await sendSignal("offer", { type: offer.type, sdp: offer.sdp });
+}
+async function agoraJoin() {
+  const AR = window.AgoraRTC;
+  try { AR.setLogLevel(3); } catch (e) {}
+  const channel = "mixo_" + call.id, client = AR.createClient({ mode: "rtc", codec: "vp8" });
+  ag.client = client;
+  client.on("user-published", async (user, type) => {
+    try { await client.subscribe(user, type); } catch (e) { return; }
+    if (type === "audio" && user.audioTrack) { user.audioTrack.play(); callLive(); }
+  });
+  client.on("user-left", () => { if (ag.client === client && call.state !== "idle") { toast("Call ended."); callEnd("ended"); } });
+  client.on("connection-state-change", (cur) => { if (ag.client === client && cur === "DISCONNECTED" && call.state === "live") callEnd("ended"); });
+  let token = null;
+  if (AGORA.tokenFn) {
+    try { const r = await sb.functions.invoke(AGORA.tokenFn, { body: { channel } }); if (r.data && r.data.token) token = r.data.token; } catch (e) {}
+  }
+  await client.join(AGORA.appId, channel, token, null);
+  await client.publish([ag.track]);
+}
+function agoraLeave() {
+  const t = ag.track, c = ag.client;
+  ag.track = null; ag.client = null;
+  try { if (t) { t.stop(); t.close(); } } catch (e) {}
+  try { if (c) c.leave(); } catch (e) {}
+}
+
+// ---------- RECENT (clock button, top right) ----------
+const agoTxt = (d) => { const a = ago(d); return a === "now" ? "just now" : /^\d+[mhd]$/.test(a) ? a + " ago" : a; };
+function recentRow(r) {
+  const p = r.p, name = p.display_name || p.username || "User", earth = !p.country || p.country === "Earth";
+  const fol = social.following.has(r.id), on = online.has(r.id);
+  return `<div class="rr" data-u="${esc(r.id)}"><div class="rr-top"><div class="rr-av"><div class="iav">${p.avatar_url ? `<img src="${esc(p.avatar_url)}" alt="">` : esc(name[0].toUpperCase())}</div>${on ? "<i></i>" : ""}</div>
+    <div class="rr-info"><b><span>${esc(name)}</span>${isPrem(p) ? crownHTML("in") : ""}</b><small>${svgI(earth ? "globe" : "pin")}${esc(earth ? "Worldwide" : p.country)} &middot; ${agoTxt(r.at)}</small></div></div>
+    <div class="rr-act"><button type="button" data-a="msg">${svgI("chat")}Message</button><button type="button" data-a="fol" class="${fol ? "on" : ""}">${svgI(fol ? "check" : "userplus")}${fol ? "Following" : "Follow"}</button><button type="button" data-a="rep" class="rp">${icon("warn")}Report</button><button type="button" data-a="blk" class="bk">${icon("block")}Block</button></div></div>`;
+}
+function cxRenderRecent() {
+  const box = $("#recentAll");
+  if (!box || $("#recentSheet").classList.contains("hidden")) return;
+  const list = CX.recent.filter((r) => !social.blocked.has(r.id));
+  box.innerHTML = list.length ? list.map(recentRow).join("") : `<div class="rr-empty">${MIXO.user ? "No one yet.<br>Tap Start Talking to meet someone." : "Log in to meet new people."}</div>`;
+}
+async function loadRecent() {
+  if (!sb || !MIXO.user) { CX.recent = []; return cxRenderRecent(); }
+  const r = await sb.from("calls").select("caller_id,callee_id,answered_at").not("answered_at", "is", null).order("answered_at", { ascending: false }).limit(80);
+  if (r.error) { CX.recent = []; return cxRenderRecent(); }
+  const seen = new Set(), rows = [];
+  for (const c of r.data || []) {
+    const id = c.caller_id === meId() ? c.callee_id : c.caller_id;
+    if (!id || id === meId() || seen.has(id)) continue;
+    seen.add(id); rows.push({ id, at: c.answered_at });
+    if (rows.length >= 30) break;
+  }
+  if (!rows.length) { CX.recent = []; return cxRenderRecent(); }
+  const cols = "id,username,display_name,avatar_url,bio,country";
+  let pr = await sb.from("profiles").select(cols + ",premium_until").in("id", rows.map((x) => x.id));
+  if (pr.error) pr = await sb.from("profiles").select(cols).in("id", rows.map((x) => x.id));
+  const map = new Map((pr.data || []).map((p) => [p.id, p]));
+  CX.recent = rows.filter((x) => map.has(x.id)).map((x) => Object.assign(x, { p: map.get(x.id) }));
+  cxRenderRecent();
+}
+async function recentClick(e) {
+  const b = e.target.closest("[data-a]"), row = e.target.closest(".rr");
+  if (!b || !row) return;
+  const r = CX.recent.find((x) => x.id === row.dataset.u);
+  if (!r) return;
+  const p = r.p, a = b.dataset.a;
+  if (a === "msg") { $("#recentSheet").classList.add("hidden"); openChat(Object.assign({}, p)); }
+  else if (a === "fol") { toggleFollow(p.id, p.username); cxRenderRecent(); }
+  else if (a === "rep") openReport({ uid: p.id, user: p.username || "user", type: "user", id: p.id });
+  else if (a === "blk") { await blockUserFlow(p.id, p.username || "user"); cxRenderRecent(); }
+}
+$("#recentAll").addEventListener("click", recentClick);
+$("#cxRecentBtn").onclick = () => { $("#recentSheet").classList.remove("hidden"); cxRenderRecent(); };
+$("#recentSheet").addEventListener("click", (e) => { if (e.target.id === "recentSheet") $("#recentSheet").classList.add("hidden"); });
+
+// ---------- who viewed your card (Premium) ----------
+async function loadViewCount() {
+  const r = await sb.rpc("card_view_count");
+  if (!r.error && typeof r.data === "number") { CX.views = r.data; $("#cdViewN").textContent = fmt(r.data); }
+}
+var viewers = [];
+async function openViewers() {
+  if (!MIXO.user) return toast("Log in to see your viewers.");
+  if (!CX.premium) return openPlans("views");
+  const body = $("#viewersBody");
+  body.innerHTML = '<p class="hint">Loading...</p>';
+  $("#viewersSheet").classList.remove("hidden");
+  const r = await sb.rpc("my_card_viewers");
+  if (r.error) { body.innerHTML = `<p class="hint">${esc(/does not exist|schema cache|could not find/i.test(r.error.message || "") ? "Run mixo_connect2.sql in Supabase first." : niceError(r.error.message))}</p>`; return; }
+  viewers = r.data || [];
+  body.innerHTML = viewers.length ? viewers.map((v, i) => `<button type="button" class="lrow" data-i="${i}"><div class="lav"></div><div class="ltx"><b>${esc(v.display_name || v.username)}</b><span>@${esc(v.username)} &middot; ${agoTxt(v.viewed_at)}</span></div></button>`).join("")
+    : '<p class="hint">No views yet.<br>They show up when someone meets you.</p>';
+  $$("#viewersBody .lav").forEach((el, i) => setAv(el, viewers[i].avatar_url, viewers[i].username));
+}
+$("#viewersSheet").addEventListener("click", (e) => {
+  if (e.target.id === "viewersSheet") return $("#viewersSheet").classList.add("hidden");
+  const row = e.target.closest(".lrow");
+  if (!row) return;
+  const v = viewers[+row.dataset.i];
+  $("#viewersSheet").classList.add("hidden");
+  openCreator({ uid: v.viewer_id, user: v.username, name: v.display_name || v.username, avatar: v.avatar_url, bio: "", country: "", profile: { following: 0, followers: 0, likes: 0 } });
+});
+$("#cdViews").onclick = openViewers;
+
+// ---------- filters ----------
+var FS = { scope: "earth", countries: new Set(), langs: new Set(), interests: new Set(), tab: "country", q: "" };
 function openFilter() {
   if (!MIXO.user) return toast("Log in to use filters.");
   if (!CX.premium) return openPlans("filter");
-  FS.countries = new Set(CX.filt.countries); FS.hideEarth = CX.filt.hideEarth; FS.q = "";
+  FS.scope = CX.filt.scope; FS.countries = new Set(CX.filt.countries); FS.langs = new Set(CX.filt.langs); FS.interests = new Set(CX.filt.interests);
+  FS.tab = "country"; FS.q = "";
   $("#fsSearch").value = "";
   renderFilter();
   $("#cxSheet").classList.remove("hidden");
 }
-function renderFilter() {
-  $("#fsEarth").classList.toggle("on", FS.hideEarth);
+function fsItems() {
   const q = FS.q.trim().toLowerCase();
-  const names = [...CC.keys()].sort().filter((n) => !q || n.toLowerCase().includes(q));
-  $("#fsList").innerHTML = names.map((n) =>
-    `<button type="button" class="fs-row${FS.countries.has(n) ? " on" : ""}" data-n="${esc(n)}"><span class="fs-fl">${flagOf(n)}</span><span>${esc(n)}</span><svg class="ic"><use href="#i-check"/></svg></button>`
-  ).join("") || '<p class="fs-none">No country found</p>';
+  if (FS.tab === "country") return [...CC.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([n, c]) => [n, n, c]).filter((x) => !q || x[1].toLowerCase().includes(q));
+  if (FS.tab === "lang") return LANG_CODES.map((c) => [c, langName(c), c.toUpperCase()]).sort((a, b) => a[1].localeCompare(b[1])).filter((x) => !q || x[1].toLowerCase().includes(q));
+  return INTERESTS.map((i) => [i[0], i[1], null]).filter((x) => !q || x[1].toLowerCase().includes(q));
+}
+const fsSet = () => (FS.tab === "country" ? FS.countries : FS.tab === "lang" ? FS.langs : FS.interests);
+function fsCount() {
+  const n = FS.countries.size + FS.langs.size + FS.interests.size;
+  $("#fsSel").textContent = n ? n + " selected" : "Anyone";
+}
+function renderFilter() {
+  $$("#fsScope button").forEach((b) => b.classList.toggle("on", b.dataset.s === FS.scope));
+  $$("#fsTabs button").forEach((b) => b.classList.toggle("on", b.dataset.t === FS.tab));
+  const set = fsSet();
+  $("#fsList").innerHTML = fsItems().map((x) => `<button type="button" class="fs-row${set.has(x[0]) ? " on" : ""}" data-k="${esc(x[0])}">${x[2] === null ? svgI(x[0]) : `<span class="fs-fl">${esc(x[2])}</span>`}<span>${esc(x[1])}</span>${svgI("check")}</button>`).join("") || '<p class="fs-none">Nothing found</p>';
   fsCount();
 }
-const fsCount = () => { $("#fsSel").textContent = FS.countries.size ? FS.countries.size + " selected" : "All countries"; };
+$("#fsScope").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) { FS.scope = b.dataset.s; renderFilter(); } });
+$("#fsTabs").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) { FS.tab = b.dataset.t; FS.q = ""; $("#fsSearch").value = ""; renderFilter(); } });
 $("#fsList").addEventListener("click", (e) => {
   const b = e.target.closest(".fs-row");
   if (!b) return;
-  const n = b.dataset.n;
-  FS.countries.has(n) ? FS.countries.delete(n) : FS.countries.add(n);
-  b.classList.toggle("on", FS.countries.has(n));
+  const set = fsSet(), k = b.dataset.k;
+  set.has(k) ? set.delete(k) : set.add(k);
+  b.classList.toggle("on", set.has(k));
   fsCount();
 });
 $("#fsSearch").addEventListener("input", (e) => { FS.q = e.target.value; renderFilter(); });
-$("#fsEarth").onclick = () => { FS.hideEarth = !FS.hideEarth; $("#fsEarth").classList.toggle("on", FS.hideEarth); };
-$("#fsClear").onclick = () => { FS.countries.clear(); FS.hideEarth = false; renderFilter(); };
+$("#fsClear").onclick = () => { FS.countries.clear(); FS.langs.clear(); FS.interests.clear(); renderFilter(); };
 $("#fsApply").onclick = () => {
-  CX.filt = { countries: [...FS.countries], hideEarth: FS.hideEarth };
-  try { localStorage.setItem("mixo_cx_filter", JSON.stringify(CX.filt)); } catch (e) {}
+  CX.filt = { scope: FS.scope, countries: [...FS.countries], langs: [...FS.langs], interests: [...FS.interests] };
+  try { localStorage.setItem("mixo_cx_filter2", JSON.stringify(CX.filt)); } catch (e) {}
   $("#cxSheet").classList.add("hidden");
   cxApply();
 };
 $("#cxSheet").addEventListener("click", (e) => { if (e.target.id === "cxSheet") $("#cxSheet").classList.add("hidden"); });
+$("#cxFilters").addEventListener("click", (e) => {
+  const s = e.target.closest("[data-scope]");
+  if (s) {
+    CX.filt.countries = []; CX.filt.langs = []; CX.filt.interests = [];
+    CX.filt.scope = s.dataset.scope;
+    try { localStorage.setItem("mixo_cx_filter2", JSON.stringify(CX.filt)); } catch (err) {}
+    return cxApply();
+  }
+  if (e.target.closest("#cxFPrem")) openFilter();
+});
 
-// ---------- plan picker ----------
+// ---------- EDIT CARD (tap your circle, top right) ----------
+var CD = { int: [], look: "chat", frame: "neon", country: "real", tab: "p" };
+function cdPaintTop() {
+  const p = MIXO.profile || {};
+  setAv($("#cdAv"), p.avatar_url, p.display_name || p.username);
+  paintFrame($("#cdRing"), CD.frame, CX.premium);
+}
+function cdPaintChips() {
+  $("#cdInts").innerHTML = INTERESTS.map((i) => `<button type="button" class="it${CD.int.includes(i[0]) ? " on" : ""}${!CD.int.includes(i[0]) && CD.int.length >= MAX_INTERESTS ? " dis" : ""}" data-k="${i[0]}">${svgI(i[0])}${esc(i[1])}</button>`).join("");
+  $("#cdIntN").textContent = CD.int.length + "/" + MAX_INTERESTS;
+}
+function cdPaintFrames() {
+  $("#cdFrames").innerHTML = FRAMES.map((f) => `<button type="button" class="fb fr${f.premium && !CX.premium ? " lock" : ""}${CD.frame === f.id ? " sel" : ""}" data-id="${f.id}" data-frame="${f.id}" data-anim="${f.anim === "static" ? "" : f.anim}" aria-label="${f.name}"><i></i>${f.premium ? svgI("crown") : ""}</button>`).join("");
+}
+function cdPaintCountry() {
+  const real = (MIXO.profile || {}).real_country;
+  $("#cdReal").textContent = real || "Not found yet";
+  $('#cdCountry [data-v="real"]').disabled = !real;
+  if (!real) CD.country = "earth";
+  $$("#cdCountry button").forEach((b) => b.classList.toggle("on", b.dataset.v === CD.country));
+}
+function cdTab(t) {
+  CD.tab = t;
+  $$("#cdTabs button").forEach((b) => b.classList.toggle("on", b.dataset.t === t));
+  $$("#cardForm .cd-pane").forEach((p) => p.classList.toggle("hidden", p.dataset.p !== t));
+}
+function openCard() {
+  if (!MIXO.user) return toast("Log in with your account to edit your card");
+  const p = MIXO.profile || {}, c = cardOf(p);
+  CD = { int: c.int.slice(), look: c.look, frame: c.frame, country: p.country === "Earth" ? "earth" : "real", tab: "p" };
+  if (!CX.premium && (FRAMES.find((f) => f.id === CD.frame) || {}).premium) CD.frame = "neon";
+  $("#cdName").value = p.display_name || "";
+  $("#cdIntro").value = c.intro;
+  $("#cdIntroN").textContent = c.intro.length + "/60";
+  $("#cdViewN").textContent = fmt(CX.views || 0);
+  const sel = $("#cdLang");
+  sel.innerHTML = LANG_CODES.map((l) => `<option value="${l}">${esc(langName(l))}</option>`).join("");
+  const want = c.lang || myLang();
+  sel.value = LANG_CODES.includes(want) ? want : "en";
+  $$("#cdLook button").forEach((b) => b.classList.toggle("on", b.dataset.v === CD.look));
+  cdPaintTop(); cdPaintChips(); cdPaintFrames(); cdPaintCountry(); cdTab("p");
+  $("#cdMsg").textContent = "";
+  $("#cardSheet").classList.remove("hidden");
+}
+function closeCard() { $("#cardSheet").classList.add("hidden"); }
+$("#cxRing").onclick = openCard;
+$("#cdTabs").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) cdTab(b.dataset.t); });
+$("#cdCancel").onclick = closeCard;
+$("#cardSheet").addEventListener("click", (e) => { if (e.target.id === "cardSheet") closeCard(); });
+$("#cdCountry").addEventListener("click", (e) => { const b = e.target.closest("button"); if (!b || b.disabled) return; CD.country = b.dataset.v; cdPaintCountry(); });
+$("#cdLook").addEventListener("click", (e) => { const b = e.target.closest("button"); if (!b) return; CD.look = b.dataset.v; $$("#cdLook button").forEach((x) => x.classList.toggle("on", x === b)); });
+$("#cdInts").addEventListener("click", (e) => {
+  const b = e.target.closest(".it");
+  if (!b) return;
+  const k = b.dataset.k, i = CD.int.indexOf(k);
+  if (i > -1) CD.int.splice(i, 1);
+  else if (CD.int.length >= MAX_INTERESTS) return toast("Pick up to " + MAX_INTERESTS + " interests");
+  else CD.int.push(k);
+  cdPaintChips();
+});
+$("#cdIntro").addEventListener("input", (e) => { $("#cdIntroN").textContent = e.target.value.length + "/60"; });
+$("#cdFrames").addEventListener("click", (e) => {
+  const b = e.target.closest(".fb");
+  if (!b) return;
+  const f = FRAMES.find((x) => x.id === b.dataset.id);
+  if (f.premium && !CX.premium) return openPlans("frame");
+  CD.frame = f.id;
+  cdPaintFrames(); cdPaintTop();
+});
+$("#cdPhotoBtn").onclick = () => $("#cdPhotoIn").click();
+$("#cdPhotoIn").onchange = async (e) => {
+  const file = e.target.files[0];
+  e.target.value = "";
+  if (!file) return;
+  try {
+    const blob = await openCropper(file, "avatar");
+    if (!blob) return;
+    $("#cdMsg").textContent = "Uploading photo...";
+    await uploadPicture(blob, "avatar");
+    $("#cdMsg").textContent = "";
+    cdPaintTop();
+  } catch (err) { $("#cdMsg").textContent = niceError(err.message); }
+};
+$("#cardForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const msg = $("#cdMsg"), btn = $("#cdSave");
+  const display_name = $("#cdName").value.trim();
+  if (!display_name) { cdTab("p"); msg.textContent = "Enter a display name."; return; }
+  btn.disabled = true; msg.textContent = "Saving...";
+  try {
+    const frame = (FRAMES.find((f) => f.id === CD.frame) || {}).premium && !CX.premium ? "neon" : CD.frame;
+    const card = { int: CD.int, look: CD.look, intro: $("#cdIntro").value.trim().slice(0, 60), frame, lang: $("#cdLang").value };
+    const upd = { display_name, connect_card: card };
+    const real = (MIXO.profile || {}).real_country;
+    if (CD.country === "earth") upd.country = "Earth"; else if (real) upd.country = real;
+    const { data, error } = await sb.from("profiles").update(upd).eq("id", meId()).select().single();
+    if (error) throw error;
+    MIXO.profile = data;
+    fillProfile(); cxRetrack();
+    closeCard();
+    toast("Card saved");
+  } catch (err) {
+    msg.textContent = /connect_card/.test(err.message || "") ? "Run mixo_connect2.sql in Supabase first." : niceError(err.message);
+  } finally { btn.disabled = false; }
+});
+
+// ---------- Premium screen ----------
+const PL_ICON = { weekly: svgI("bolt"), monthly: svgI("globe"), yearly: svgI("globe") };
+const PL_WHY = {
+  filter: "Any country, language or interest is Premium",
+  skip: "Free members get " + FREE_SKIPS + " skips a day",
+  frame: "Animated frames are Premium",
+  views: "Seeing who viewed you is Premium",
+  back: "Calling people you passed is Premium",
+};
 function openPlans(why) {
   const st = $("#plStatus");
   let msg = "";
-  if (CX.premium && CX.until) msg = "You're Premium until " + new Date(CX.until).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
-  else if (why === "filter") msg = "Filters are for Premium members";
-  else if (why === "limit") msg = "You've used all " + cxLimit() + " free requests";
+  if (CX.premium && CX.until) msg = "Premium until " + new Date(CX.until).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+  else if (PL_WHY[why]) msg = PL_WHY[why];
   st.textContent = msg;
   st.classList.toggle("hidden", !msg);
   plansRender();
@@ -2977,10 +3459,10 @@ function openPlans(why) {
 }
 function plansRender() {
   $("#plCards").innerHTML = PLANS.map((p) =>
-    `<button type="button" class="pl-card${p.id === PL.sel ? " on" : ""}" data-id="${p.id}">${p.badge ? `<span class="pl-badge">${p.badge}</span>` : ""}<span class="pl-radio"></span><span class="pl-mid"><b>${p.name}</b><small>${p.note}</small></span><span class="pl-price"><b>$${p.price}</b><small>/ ${p.per}</small></span></button>`
+    `<button type="button" class="pl-card${p.id === PL.sel ? " on" : ""}" data-id="${p.id}">${p.badge ? `<span class="pl-badge">${p.badge}</span>` : ""}<span class="pl-tick">${svgI("check")}</span>${PL_ICON[p.id]}<b class="n">${p.name}</b><b class="p">$${p.price}</b>${p.id === "yearly" ? `<small>${p.sub}</small>` : ""}${p.save ? `<span class="pl-save">${p.save}</span>` : ""}${p.id === "weekly" ? `<small>${p.sub}</small>` : ""}${p.note ? `<small>${p.note}</small>` : ""}</button>`
   ).join("");
   const p = PLANS.find((x) => x.id === PL.sel);
-  $("#plGo").textContent = (CX.premium ? "Extend" : "Continue") + " · $" + p.price + " / " + p.per;
+  $("#plGo").textContent = (CX.premium ? "EXTEND WITH " : "CONTINUE WITH ") + p.name.toUpperCase();
 }
 $("#plCards").addEventListener("click", (e) => {
   const b = e.target.closest(".pl-card");
@@ -2996,7 +3478,6 @@ $("#plGo").onclick = () => {
   location.href = link + (link.includes("?") ? "&" : "?") + "client_reference_id=" + encodeURIComponent(meId());
 };
 
-$("#cxReq").onclick = cxRequest;
-$("#cxSkip").onclick = cxSkip;
-$("#cxFilter").onclick = openFilter;
-$("#cxBack").onclick = () => go("home");
+$("#cxStart").onclick = cxStartTap;
+$("#cxPrem").onclick = () => openPlans();
+$("#cxUpgrade").onclick = () => openPlans("limit");
