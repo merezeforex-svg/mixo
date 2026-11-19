@@ -14,7 +14,9 @@ const icon = (n) => `<svg class="ic"><use href="#i-${n}"/></svg>`;
 const fmt = (n) => (n >= 1000 ? (n / 1000).toFixed(1).replace(".0", "") + "K" : n);
 
 let toastTimer;
+var TOASTS = false;   // the pop-up pill messages are OFF everywhere. Set to true to bring them back.
 function toast(msg) {
+  if (!TOASTS) return;
   const t = $("#toast");
   t.textContent = msg;
   t.classList.add("show");
@@ -199,11 +201,11 @@ const social = { likes: new Set(), saves: new Set(), following: new Set(), block
 function go(page) {
   $$(".page").forEach((p) => p.classList.toggle("on", p.id === page));
   $$("#nav [data-page]").forEach((b) => b.classList.toggle("on", b.dataset.page === page));
-  if (page === "home") { if (MIXO.current) MIXO.current.play().catch(() => {}); }
+  if (page === "home") { if (MIXO.current) MIXO.current.play().catch(() => {}); loadStories(); }
   else pauseAll();
   if (page === "profile") loadMyPosts();
   if (page === "explore") loadExplore();
-  if (page === "inbox") refreshInbox();
+  if (page === "inbox") { refreshInbox(); refreshActivity(); }
   if (page === "connect") connectEnter(); else connectLeave();
 }
 $$("#nav [data-page]").forEach((b) => (b.onclick = () => go(b.dataset.page)));
@@ -224,16 +226,163 @@ $("#sheet").onclick = (e) => {
     $("#sheet").classList.add("hidden");
     if (opt.dataset.kind === "video") openCamera();
     else if (opt.dataset.kind === "photo") openPhoto();
+    else if (opt.dataset.kind === "story") $("#stFile").click();
     else openTopic();
   }
 };
 
+// ---------- sound mixer: a video + a separate sound, each with its own volume ----------
+const MX = { ctx: null, map: new WeakMap(), all: new Set() };
+const mxClamp = (n, d = 1) => (n === null || n === undefined || n === "" || !isFinite(+n) ? d : Math.min(1, Math.max(0, +n)));
+function mxCtx() {
+  try {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return null;
+    if (!MX.ctx) { MX.ctx = new AC(); MX.ctx.onstatechange = () => { if (MX.ctx.state === "running") MX.all.forEach((m) => m.kick()); }; }
+    if (MX.ctx.state === "suspended") MX.ctx.resume().catch(() => {});
+    return MX.ctx;
+  } catch (e) { return null; }
+}
+// the phone only lets audio start after a tap, so any tap wakes the mixer
+["pointerdown", "touchend", "click", "keydown"].forEach((ev) => document.addEventListener(ev, () => mxCtx(), { capture: true, passive: true }));
+
+// the sound is downloaded once and played from memory, started at the video's own time (reliable on iPhone)
+const MXBUF = new Map();
+function mxLoad(url) {
+  if (!MXBUF.has(url)) {
+    const c = mxCtx();
+    MXBUF.set(url, !c ? Promise.resolve(null) : fetch(url, { mode: "cors" }).then((r) => r.arrayBuffer())
+      .then((ab) => new Promise((res, rej) => c.decodeAudioData(ab, res, rej)))
+      .catch(() => { MXBUF.delete(url); return null; }));
+  }
+  return MXBUF.get(url);
+}
+function mxGet(vid, create = true) {
+  let m = MX.map.get(vid);
+  if (m || !create) return m || null;
+  m = { url: "", buf: null, src: null, sv: 1, vv: 1, vg: null, sg: null, off: 0, at: 0 };
+  const c = mxCtx();
+  if (c) {
+    try { const vs = c.createMediaElementSource(vid); m.vg = c.createGain(); vs.connect(m.vg); m.vg.connect(c.destination); } catch (e) { m.vg = null; }
+    m.sg = c.createGain(); m.sg.connect(c.destination);
+  }
+  const stop = () => { if (m.src) { try { m.src.stop(); } catch (e) {} try { m.src.disconnect(); } catch (e) {} m.src = null; } };
+  const start = () => {
+    stop();
+    const cx = MX.ctx;
+    if (!cx || !m.buf || !m.url || vid.paused) return;
+    const t = vid.currentTime;
+    if (t >= m.buf.duration) return;
+    const s = cx.createBufferSource();
+    s.buffer = m.buf;
+    s.playbackRate.value = vid.playbackRate || 1;
+    s.connect(m.sg);
+    s.start(0, t);
+    m.src = s; m.off = t; m.at = cx.currentTime;
+  };
+  const gain = () => { if (m.sg) m.sg.gain.value = vid.muted ? 0 : m.sv; };
+  ["play", "playing", "seeked", "ratechange"].forEach((ev) => vid.addEventListener(ev, start));
+  ["pause", "waiting"].forEach((ev) => vid.addEventListener(ev, stop));
+  vid.addEventListener("timeupdate", () => {
+    if (!m.src || !MX.ctx || MX.ctx.state !== "running") return;
+    const exp = m.off + (MX.ctx.currentTime - m.at) * (vid.playbackRate || 1);
+    if (Math.abs(exp - vid.currentTime) > 0.35) start();
+  });
+  vid.addEventListener("volumechange", gain);
+  m.setVols = (sv, vv) => {
+    m.sv = sv; m.vv = vv;
+    if (m.vg) m.vg.gain.value = vv; else vid.volume = vv;
+    gain();
+  };
+  m.setSound = (url) => {
+    url = url || "";
+    if (url === m.url) return;
+    m.url = url; m.buf = null; stop();
+    if (url) mxLoad(url).then((b) => { if (m.url === url) { m.buf = b; start(); } });
+  };
+  m.kick = () => { if (m.url && m.buf && !vid.paused) start(); };
+  MX.map.set(vid, m);
+  MX.all.add(m);
+  return m;
+}
+// feed / card clips that carry a sound or a changed volume get mixed
+function mxPrep(vid) {
+  const clip = vid.closest(".clip");
+  if (!clip || !clip.dataset.mx) return;
+  const m = mxGet(vid);
+  m.setVols(mxClamp(clip.dataset.sv), mxClamp(clip.dataset.vv));
+  m.setSound(clip.dataset.sndurl || "");
+}
+
 // ---------- post a video ----------
 const postSheet = $("#postSheet"), postVid = $("#postVid"), postMsg = $("#postMsg");
 let picked = null, uploading = false;
+const po = { loc: "", link: "", vis: "everyone", comments: true, share: false };
+const VIS = { everyone: "Everyone can view this post", followers: "Only followers can view this post", me: "Only you can view this post" };
+function paintRows() {
+  $("#ppLocT").textContent = po.loc || "Location";
+  $("#ppLinkT").textContent = po.link ? po.link.replace(/^https?:\/\//, "") : "Add link";
+  $("#ppVisT").textContent = VIS[po.vis];
+  $("#ppMoreT").textContent = po.comments ? "Comments on" : "Comments off";
+  $("#ppShareT").textContent = po.share ? "On" : "Off";
+}
+let optH = null;
+function optOpen(title, body, fn) { $("#optTitle").textContent = title; $("#optBody").innerHTML = body; optH = fn; $("#optSheet").classList.remove("hidden"); }
+function optClose() { $("#optSheet").classList.add("hidden"); }
+$("#optSheet").addEventListener("click", (e) => {
+  if (e.target.id === "optSheet") return optClose();
+  const b = e.target.closest("[data-o]");
+  if (b && optH) optH(b.dataset.o);
+});
+$("#ppLoc").onclick = () => optOpen("Location", `<input id="optIn" class="opt-in" maxlength="60" placeholder="City or place" value="${esc(po.loc)}"><button type="button" class="opt" data-o="gps">Use my country</button><button type="button" class="opt" data-o="save">Save</button><button type="button" class="opt" data-o="clear">Remove location</button>`, async (o) => {
+  if (o === "gps") { $("#optIn").value = "Finding..."; $("#optIn").value = (await detectCountry()) || ""; return; }
+  po.loc = o === "save" ? $("#optIn").value.trim() : ""; paintRows(); optClose();
+});
+$("#ppLink").onclick = () => optOpen("Add link", `<input id="optIn" class="opt-in" maxlength="200" placeholder="https://" value="${esc(po.link)}"><button type="button" class="opt" data-o="save">Save</button><button type="button" class="opt" data-o="clear">Remove link</button>`, (o) => {
+  let v = o === "save" ? $("#optIn").value.trim() : "";
+  if (v && !/^https?:\/\//i.test(v)) v = "https://" + v;
+  po.link = v; paintRows(); optClose();
+});
+$("#ppVis").onclick = () => optOpen("Who can view this post", Object.keys(VIS).map((k) => `<button type="button" class="opt${po.vis === k ? " sel" : ""}" data-o="${k}">${VIS[k].replace(" this post", "")}</button>`).join(""), (o) => { po.vis = o; paintRows(); optClose(); });
+$("#ppMore").onclick = () => optOpen("More options", `<button type="button" class="opt" data-o="c">Allow comments: ${po.comments ? "On" : "Off"}</button>`, () => { po.comments = !po.comments; paintRows(); optClose(); });
+$("#ppShare").onclick = () => { po.share = !po.share; paintRows(); };
+$$("#postSheet [data-ins]").forEach((b) => (b.onclick = () => {
+  const t = $("#postCap"), s = t.selectionStart == null ? t.value.length : t.selectionStart, e = t.selectionEnd == null ? s : t.selectionEnd;
+  if (t.value.length - (e - s) >= t.maxLength) return;
+  t.value = t.value.slice(0, s) + b.dataset.ins + t.value.slice(e);
+  t.focus(); t.setSelectionRange(s + 1, s + 1);
+}));
+$("#postBack").onclick = () => closePost();
+const pm = { sound: null, sv: 1, vv: 1 };   // sound chosen for this post + the two volumes (0 to 1)
+function paintMix() {
+  $("#postMix").classList.toggle("hidden", !picked);
+  $("#postSoundTxt").textContent = pm.sound ? sndTitle(pm.sound.name) : "Add sound";
+  $("#postSoundX").classList.toggle("hidden", !pm.sound);
+  $("#postSound").classList.toggle("on", !!pm.sound);
+  $("#mxSnd").value = Math.round(pm.sv * 100);
+  $("#mxVid").value = Math.round(pm.vv * 100);
+  $("#mxSnd").disabled = !pm.sound;
+  $("#mxSndRow").classList.toggle("off", !pm.sound);
+  $("#mxSndN").textContent = Math.round(pm.sv * 100) + "%";
+  $("#mxVidN").textContent = Math.round(pm.vv * 100) + "%";
+}
+function applyMix() {
+  const m = mxGet(postVid);
+  m.setVols(pm.sv, pm.vv);
+  m.setSound(pm.sound ? pm.sound.url : "");
+}
+$("#mxSnd").addEventListener("input", (e) => { pm.sv = e.target.value / 100; $("#mxSndN").textContent = e.target.value + "%"; postVid.muted = false; applyMix(); });
+$("#mxVid").addEventListener("input", (e) => { pm.vv = e.target.value / 100; $("#mxVidN").textContent = e.target.value + "%"; postVid.muted = false; applyMix(); });
+$("#postSound").onclick = (e) => {
+  if (e.target.closest("#postSoundX")) { pm.sound = null; applyMix(); paintMix(); return; }
+  openSoundPicker("post");
+};
 
 function resetPost() {
   picked = null;
+  pm.sound = null; pm.sv = 1; pm.vv = 1;
+  po.loc = ""; po.link = ""; po.vis = "everyone"; po.comments = true; po.share = false; paintRows();
+  { const m = mxGet(postVid, false); if (m) { m.setSound(""); m.setVols(1, 1); } }
   if (postVid.src) URL.revokeObjectURL(postVid.src);
   postVid.removeAttribute("src");
   postVid.load();
@@ -241,6 +390,7 @@ function resetPost() {
   $("#postPick").classList.remove("has");
   $("#postForm").reset();
   postMsg.textContent = "";
+  paintMix();
 }
 function openPost() {
   if (!MIXO.user) return toast("Log in with your account to post");
@@ -286,7 +436,13 @@ function handleVideoFile(file) {
     postVid.src = URL.createObjectURL(file);
     postVid.classList.remove("hidden");
     $("#postPick").classList.add("has");
-    postVid.play().catch(() => {});
+    pm.sound = file._sound ? { id: file._sound.id, name: file._sound.name, url: file._sound.url } : null;
+    pm.sv = 1;
+    pm.vv = file._vv != null ? file._vv : 1;
+    postVid.muted = false;
+    applyMix();
+    paintMix();
+    postVid.play().catch(() => { postVid.muted = true; postVid.play().catch(() => {}); });
   };
   probe.onerror = () => { URL.revokeObjectURL(url); postMsg.textContent = "Couldn't read that video. Try an MP4."; };
   probe.src = url;
@@ -306,16 +462,26 @@ $("#postForm").addEventListener("submit", async (e) => {
     const up = await sb.storage.from("videos").upload(path, picked, { contentType: picked.type || "video/mp4" });
     if (up.error) throw up.error;
     const url = sb.storage.from("videos").getPublicUrl(path).data.publicUrl;
-    const ins = await sb.from("posts").insert(Object.assign({ user_id: MIXO.user.id, type: "video", caption: e.target.caption.value.trim(), media_url: url }, picked._sound ? { sound_id: picked._sound.id } : {}));
+    const row = { user_id: MIXO.user.id, type: "video", caption: e.target.caption.value.trim(), media_url: url };
+    if (pm.sound) { row.sound_id = pm.sound.id; row.sound_vol = pm.sv; }
+    if (pm.sound || pm.vv !== 1) row.video_vol = pm.vv;
+    const opt = {};
+    if (po.loc) opt.location = po.loc;
+    if (po.link) opt.link_url = po.link;
+    if (po.vis !== "everyone") opt.visibility = po.vis;
+    if (!po.comments) opt.allow_comments = false;
+    const ins = await sb.from("posts").insert(Object.assign({}, row, opt)).select("id").maybeSingle();
     if (ins.error) { await sb.storage.from("videos").remove([path]); throw ins.error; }
+    const doShare = po.share, newId = ins.data && ins.data.id;
     uploading = false;
     closePost();
     go("home");
     await renderFeed();
+    if (doShare && newId) sharePost(newId);
     toast("Posted!");
     loadMyPosts();
   } catch (err) {
-    postMsg.textContent = /sound_id/i.test(err.message || "") ? "Run mixo_sounds.sql in Supabase first." : niceError(err.message);
+    postMsg.textContent = /location|link_url|visibility|allow_comments/i.test(err.message || "") ? "Run mixo_stories_and_post_options.sql in Supabase first." : /sound_vol|video_vol/i.test(err.message || "") ? "Run mixo_sound_volume.sql in Supabase first." : /sound_id/i.test(err.message || "") ? "Run mixo_sounds.sql in Supabase first." : niceError(err.message);
   } finally {
     uploading = false;
     btn.disabled = false;
@@ -389,6 +555,7 @@ function camClose() {
   const rv = $("#camRevVid");
   rv.pause();
   rv.removeAttribute("src");
+  { const rm = mxGet(rv, false); if (rm) rm.setSound(""); }
   $("#camCount").classList.add("hidden");
   camEl.classList.add("hidden");
   if ($("#home").classList.contains("on") && MIXO.current) MIXO.current.play().catch(() => {});
@@ -397,7 +564,7 @@ function camClose() {
 function camStartRec() {
   const mime = CAM_MIMES.find((m) => MediaRecorder.isTypeSupported(m)) || "";
   try {
-    cam.rec = new MediaRecorder(cam.sound && cam.mix ? cam.mix : cam.stream, Object.assign({ videoBitsPerSecond: 3000000 }, mime ? { mimeType: mime } : {}));
+    cam.rec = new MediaRecorder(cam.stream, Object.assign({ videoBitsPerSecond: 3000000 }, mime ? { mimeType: mime } : {}));
   } catch (err) { return toast("This browser can't record video here."); }
   cam.chunks = [];
   cam.rec.ondataavailable = (e) => { if (e.data && e.data.size) cam.chunks.push(e.data); };
@@ -432,6 +599,10 @@ function camFinish() {
   cam.url = URL.createObjectURL(cam.file);
   const rv = $("#camRevVid");
   rv.src = cam.url;
+  { // the review plays the chosen sound alongside your clip, the same way it will post
+    const rm = mxGet(rv, !!cam.sound);
+    if (rm) { rm.setVols(1, cam.sound && !cam.reply ? 0 : 1); rm.setSound(cam.sound && !cam.reply ? cam.sound.url : ""); }
+  }
   rv.play().catch(() => {});
   $("#camReview").classList.remove("hidden");
 }
@@ -481,10 +652,11 @@ $$("#camModes button").forEach((b) => (b.onclick = () => {
   cam.max = +b.dataset.s;
   $$("#camModes button").forEach((x) => x.classList.toggle("on", x === b));
 }));
+$("#camStory").onclick = () => { const f = cam.file; if (!f) return; camClose(); postStory(f); };
 $("#camRetake").onclick = () => { $("#camRevVid").pause(); $("#camReview").classList.add("hidden"); };
 $("#camNext").onclick = () => {
   const f = cam.file;
-  if (cam.sound && !cam.reply) f._sound = { id: cam.sound.id, name: cam.sound.name };
+  if (cam.sound && !cam.reply) { f._sound = { id: cam.sound.id, name: cam.sound.name, url: cam.sound.url }; f._vv = 0; }
   if (cam.reply) { const r = cam.reply; camClose(); return sendVideoReply(r, f); }
   camClose();
   openPost();
@@ -493,7 +665,7 @@ $("#camNext").onclick = () => {
 
 // ---------- sounds: use someone's sound on your video ----------
 const snd = { id: "", root: null, audio: null };
-let spRows = [];
+let spRows = [], spTarget = "cam";
 const camLim = () => (cam.sndDur ? Math.min(cam.max, cam.sndDur) : cam.max);
 const sndTitle = (name) => name + " - Original sound";
 
@@ -510,25 +682,16 @@ $("#camSound").onclick = (e) => {
 };
 
 // runs inside the Record tap so the phone allows the audio to play
+// (the sound plays out loud while you record; it is mixed in later, when you post)
 function soundUnlock() {
   try {
-    const AC = window.AudioContext || window.webkitAudioContext;
-    if (!cam.ctx) cam.ctx = new AC();
-    if (cam.ctx.state === "suspended") cam.ctx.resume();
     const el = new Audio();
-    el.crossOrigin = "anonymous";
     el.preload = "auto";
     el.src = cam.sound.url;
     el.onloadedmetadata = () => { if (isFinite(el.duration)) cam.sndDur = el.duration; };
-    const src = cam.ctx.createMediaElementSource(el);
-    const dest = cam.ctx.createMediaStreamDestination();
-    src.connect(dest);
-    src.connect(cam.ctx.destination);
     cam.sndEl = el;
-    cam.mix = new MediaStream([...cam.stream.getVideoTracks(), ...dest.stream.getAudioTracks()]);
     el.play().then(() => el.pause()).catch(() => {});
   } catch (err) {
-    cam.mix = null;
     cam.sndEl = null;
     cam.sound = null;
     paintCamSound();
@@ -537,7 +700,8 @@ function soundUnlock() {
 }
 function soundOff() { if (cam.sndEl) { try { cam.sndEl.pause(); } catch (e) {} } }
 
-async function openSoundPicker() {
+async function openSoundPicker(target) {
+  spTarget = target === "post" ? "post" : "cam";
   const body = $("#spBody");
   $("#sndPick").classList.remove("hidden");
   body.innerHTML = '<p class="hint">Loading...</p>';
@@ -555,10 +719,18 @@ $("#sndPick").addEventListener("click", (e) => {
   const row = e.target.closest(".lrow");
   if (!row) return;
   const s = spRows[+row.dataset.i];
-  cam.sound = { id: s.id, url: s.url, name: s.name };
-  cam.sndDur = 0;
-  cam.mix = null;
-  paintCamSound();
+  if (spTarget === "post") {
+    pm.sound = { id: s.id, url: s.url, name: s.name };
+    postVid.muted = false;
+    applyMix();
+    paintMix();
+    postVid.play().catch(() => {});
+  } else {
+    cam.sound = { id: s.id, url: s.url, name: s.name };
+    cam.sndDur = 0;
+    cam.mix = null;
+    paintCamSound();
+  }
   $("#sndPick").classList.add("hidden");
 });
 
@@ -577,6 +749,7 @@ async function openSound(id) {
   pauseAll();
   snd.id = String(id);
   snd.root = null;
+  $(".snd-sheet").classList.remove("full");
   $("#sndPage").classList.remove("hidden");
   $("#sndGrid").innerHTML = '<p class="snd-hint">Loading...</p>';
   ["#sndCount", "#sndCreators", "#sndLikes"].forEach((k) => ($(k).textContent = "-"));
@@ -600,6 +773,23 @@ async function openSound(id) {
 
 $("#sndWave").innerHTML = Array.from({ length: 24 }, (_, i) => `<i style="--h:${6 + Math.round(Math.abs(Math.sin(i * 1.7)) * 14)}px;--d:${i * 50}ms"></i>`).join("");
 $("#sndBack").onclick = closeSound;
+// drag the handle / header: up = full screen, down = back to normal, down again = close
+(function sndDrag() {
+  const sheet = $(".snd-sheet");
+  [$(".snd-grab"), $(".snd-hd")].forEach((el) => {
+    let y0 = null;
+    el.addEventListener("pointerdown", (e) => { y0 = e.clientY; try { el.setPointerCapture(e.pointerId); } catch (err) {} });
+    el.addEventListener("pointermove", (e) => {
+      if (y0 === null) return;
+      const dy = e.clientY - y0;
+      if (dy < -36) { sheet.classList.add("full"); y0 = e.clientY; }
+      else if (dy > 36) { if (sheet.classList.contains("full")) sheet.classList.remove("full"); else closeSound(); y0 = null; }
+    });
+    const end = () => { y0 = null; };
+    el.addEventListener("pointerup", end);
+    el.addEventListener("pointercancel", end);
+  });
+})();
 $("#sndPage").addEventListener("click", (e) => { if (e.target.id === "sndPage") closeSound(); });
 $("#sndOwner").onclick = () => { const r = snd.root; if (r) { closeSound(); openCreator(r); } };
 $("#sndPlay").onclick = () => {
@@ -621,26 +811,48 @@ $("#sndGrid").addEventListener("click", (e) => {
   const t = e.target.closest(".snt");
   if (!t) return;
   stopSndPreview();
-  openVidCard(t.dataset.id);
+  openVidCard(t.dataset.id, gridIds("#sndGrid .snt"));
 });
 
 // ---------- video card: a video opens small, with its buttons (not full screen) ----------
+let vcIo = null;
 function closeVidCard() {
+  if (vcIo) { vcIo.disconnect(); vcIo = null; }
+  $$("#vcCard video").forEach((v) => { v.pause(); const m = mxGet(v, false); if (m) m.setSound(""); });
   $("#vcSheet").classList.add("hidden");
   $("#vcCard").innerHTML = "";
 }
-async function openVidCard(id) {
+const gridIds = (sel) => $$(sel).map((t) => String(t.dataset.id));
+// ctx = the ids of the videos you can scroll through (only the ones from the grid you tapped in)
+async function openVidCard(id, ctx) {
   if (!sb) return;
   pauseAll();
-  let p = postCache.get(String(id));
-  if (!p) { try { p = await fetchOne(id); } catch (err) { return toast(socialErr(err)); } }
-  Object.assign(p, { src: p.img, caption: p.text, sound: "Original sound" });
-  $("#vcCard").innerHTML = clipHTML(p);
+  id = String(id);
+  let first = postCache.get(id);
+  if (!first) { try { first = await fetchOne(id); } catch (err) { return toast(socialErr(err)); } }
+  let ids = (ctx && ctx.length ? ctx : [id]).map(String);
+  if (ids.indexOf(id) < 0) ids = [id];
+  const list = ids.map((k) => postCache.get(k)).filter((p) => p && p.type === "video" && p.img);
+  let at = list.findIndex((p) => String(p.id) === id);
+  if (at < 0) { list.unshift(first); at = 0; }
+  list.forEach((p) => Object.assign(p, { src: p.img, caption: p.text, sound: "Original sound" }));
+  if (vcIo) { vcIo.disconnect(); vcIo = null; }
+  $("#vcCard").innerHTML = '<div class="vclist" id="vcList">' + list.map(clipHTML).join("") + "</div>";
   $("#vcSheet").classList.remove("hidden");
-  const vid = $("#vcCard video.vid");
-  if (!vid) return;
-  vid.muted = !MIXO.sound;
-  vid.play().catch(() => { vid.muted = true; vid.play().catch(() => {}); });
+  const sc = $("#vcList");
+  sc.scrollTop = at * sc.clientHeight;
+  vcIo = new IntersectionObserver((entries) => {
+    entries.forEach((en) => {
+      const vid = en.target, clip = vid.closest(".clip");
+      if (en.isIntersecting) {
+        vid.muted = !MIXO.sound;
+        clip.classList.remove("paused");
+        mxPrep(vid);
+        vid.play().catch(() => { vid.muted = true; vid.play().catch(() => {}); });
+      } else { vid.pause(); vid.currentTime = 0; }
+    });
+  }, { root: sc, threshold: 0.7 });
+  $$("video.vid", sc).forEach((v) => { v.playsInline = true; vcIo.observe(v); });
 }
 $("#vcClose").onclick = closeVidCard;
 $("#vcSheet").addEventListener("click", (e) => { if (e.target.id === "vcSheet") closeVidCard(); });
@@ -650,7 +862,7 @@ $("#vcCard").addEventListener("click", (e) => {
   if (clip && !e.target.closest("[data-act], .info")) tapVideo(clip);
 });
 
-$("#sndStory").onclick = () => toast("Stories are coming soon");
+$("#sndStory").onclick = () => $("#stFile").click();
 
 // ---------- connect + profile ----------
 // ---------- edit profile ----------
@@ -1035,18 +1247,20 @@ function clipHTML(v) {
   const av = v.avatar ? `<img src="${esc(v.avatar)}" alt="">` : esc((v.user || "M")[0].toUpperCase());
   const type = v.type || "video";
   const isVid = type === "video" && v.src;
-  const videoMedia = `<video class="vid" src="${esc(v.src)}" loop muted playsinline webkit-playsinline disablepictureinpicture disableremoteplayback controlslist="nofullscreen nodownload noremoteplayback" preload="metadata"></video><div class="pp"><svg class="ic" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></div>`;
+  const mx = !!(isVid && (v.sndUrl || (v.vv !== undefined && v.vv !== null && v.vv !== 1)));
+  const videoMedia = `<video class="vid"${mx ? ' crossorigin="anonymous"' : ""} src="${esc(v.src)}" loop muted playsinline webkit-playsinline disablepictureinpicture disableremoteplayback controlslist="nofullscreen nodownload noremoteplayback" preload="metadata"></video><div class="pp"><svg class="ic" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></div>`;
   const media = type === "photo" ? `<img class="pimg" src="${esc(v.src)}" alt="" draggable="false">`
     : type === "topic" ? `<div class="topic" style="background:${topicBg(v.id)}"><p>${esc(v.caption)}</p></div>`
     : v.src ? videoMedia : `<div class="bg"></div><span class="tag">Preview layout</span>`;
   return `
-  <article class="clip" data-id="${esc(v.id)}">
+  <article class="clip" data-id="${esc(v.id)}"${mx ? ` data-mx="1" data-sv="${v.sv == null ? 1 : v.sv}" data-vv="${v.vv == null ? 1 : v.vv}" data-sndurl="${esc(v.sndUrl || "")}"` : ""}>
     ${media}
     ${mine || (MIXO.user && v.uid) ? `<button class="more" data-act="more" aria-label="${mine ? "Delete or more" : "More"}">${icon("more")}</button>` : ""}
     ${isVid ? `<div class="pill"><span class="arr"><i></i><i></i></span><span class="pt">Pull down to lock 2x speed</span></div>` : ""}
     <div class="info">
       <div class="user">@${esc(v.user)}</div>
       ${v.caption && type !== "topic" ? `<p class="cap">${esc(v.caption)}</p>` : ""}
+      ${v.loc ? `<div class="ptag">${icon("pin")}<span>${esc(v.loc)}</span></div>` : ""}${v.link && /^https?:\/\//i.test(v.link) ? `<a class="plink" href="${esc(v.link)}" target="_blank" rel="noopener noreferrer">${esc(v.link.replace(/^https?:\/\//i, "").slice(0, 32))}</a>` : ""}
       ${type === "video" ? `<div class="snd" data-act="sound">${icon("music")}<span>${esc(v.snd ? v.snd.name + " - Original sound" : (v.name ? "Original sound - " + v.name : v.sound))}</span></div>` : ""}
     </div>
     <div class="rail">
@@ -1090,6 +1304,7 @@ async function renderFeed() {
   feed.innerHTML = videos.map(clipHTML).join("");
   feed.scrollTop = 0;
   watchVideos();
+  loadStories();
 }
 
 // autoplay the video that fills the screen, pause the rest
@@ -1103,6 +1318,7 @@ function watchVideos() {
         MIXO.current = vid;
         vid.muted = !MIXO.sound;
         vid.closest(".clip").classList.remove("paused");
+        mxPrep(vid);
         vid.play().catch(() => { vid.muted = true; vid.play().catch(() => {}); });
       } else {
         vid.pause();
@@ -1120,7 +1336,7 @@ document.addEventListener("visibilitychange", () => { if (document.hidden) pause
 function tapVideo(clip) {
   const vid = $("video.vid", clip);
   if (!vid) return;
-  if (vid.muted) { MIXO.sound = true; $$("video.vid").forEach((x) => (x.muted = false)); return; }
+  if (vid.muted) { MIXO.sound = true; $$("video.vid").forEach((x) => { x.muted = false; const m = mxGet(x, false); if (m) m.kick(); }); return; }
   if (vid.paused) { vid.play().catch(() => {}); clip.classList.remove("paused"); }
   else { vid.pause(); clip.classList.add("paused"); }
 }
@@ -1397,32 +1613,47 @@ function sndOf(r) {
   const p = (Array.isArray(s.profiles) ? s.profiles[0] : s.profiles) || {};
   return { id: s.id, uid: s.user_id, name: p.display_name || p.username || "user", avatar: p.avatar_url };
 }
+// the sound's own file, only for posts made with the volume mixer (older posts have the sound baked in)
+function sndUrlOf(r) {
+  if (r.sound_vol == null) return "";
+  const s = Array.isArray(r.sound) ? r.sound[0] : r.sound;
+  return (s && s.media_url) || "";
+}
 function normPost(r) {
   const p = (Array.isArray(r.profiles) ? r.profiles[0] : r.profiles) || {};
   const o = { id: r.id, uid: r.user_id, type: r.type, text: r.caption || "", img: r.media_url, time: r.created_at,
     user: p.username || "user", name: p.display_name || p.username || "User", avatar: p.avatar_url,
     bio: p.bio || "", country: p.country || "", likes: cnt(r.post_likes), comments: cnt(r.post_comments), views: Number(r.views) || 0, soundId: r.sound_id || null, snd: sndOf(r),
+    sv: r.sound_vol == null ? null : Number(r.sound_vol), vv: r.video_vol == null ? 1 : Number(r.video_vol), sndUrl: sndUrlOf(r),
+    loc: r.location || "", link: r.link_url || "", vis: r.visibility || "everyone", allowComments: r.allow_comments !== false,
     profile: { following: 0, followers: 0, likes: 0 } };
   postCache.set(String(r.id), o);
   return o;
 }
-const SND_COLS = ",sound_id,sound:posts!sound_id(id,user_id,profiles!user_id(username,display_name,avatar_url))";
+const SND_COLS = ",sound_id,sound:posts!sound_id(id,user_id,media_url,profiles!user_id(username,display_name,avatar_url))";
+const VOL_COLS = ",sound_vol,video_vol";
+const OPT_COLS = ",location,link_url,visibility,allow_comments";
+const canSee = (p) => !social.blocked.has(p.uid) && (!p.vis || p.vis === "everyone" || (MIXO.user && p.uid === MIXO.user.id) || (p.vis === "followers" && social.following.has(p.uid)));
 const POST_COLS = "id,user_id,type,caption,media_url,created_at,profiles!user_id(username,display_name,avatar_url,bio,country)";
 async function fetchPosts(types) {
   const q = (cols) => sb.from("posts").select(cols).in("type", types).order("created_at", { ascending: false }).limit(60);
-  let r = await q(POST_COLS + SND_COLS + ",views,post_likes(count),post_comments(count)");
-  if (r.error) r = await q(POST_COLS + ",views,post_likes(count),post_comments(count)");
+  const r = await selectPosts(q);
+  if (r.error) throw r.error;
+  return r.data.map(normPost).filter(canSee);
+}
+async function selectPosts(q) {
+  const tail = ",views,post_likes(count),post_comments(count)";
+  let r = await q(POST_COLS + SND_COLS + VOL_COLS + OPT_COLS + tail);
+  if (r.error) r = await q(POST_COLS + SND_COLS + VOL_COLS + tail);
+  if (r.error) r = await q(POST_COLS + SND_COLS + tail);
+  if (r.error) r = await q(POST_COLS + tail);
   if (r.error) r = await q(POST_COLS + ",post_likes(count),post_comments(count)");
   if (r.error) r = await q(POST_COLS);
-  if (r.error) throw r.error;
-  return r.data.map(normPost).filter((p) => !social.blocked.has(p.uid));
+  return r;
 }
 async function fetchOne(id) {
   const q = (cols) => sb.from("posts").select(cols).eq("id", id).maybeSingle();
-  let r = await q(POST_COLS + SND_COLS + ",views,post_likes(count),post_comments(count)");
-  if (r.error) r = await q(POST_COLS + ",views,post_likes(count),post_comments(count)");
-  if (r.error) r = await q(POST_COLS + ",post_likes(count),post_comments(count)");
-  if (r.error) r = await q(POST_COLS);
+  const r = await selectPosts(q);
   if (r.error || !r.data) throw r.error || new Error("Post not found");
   return normPost(r.data);
 }
@@ -1507,12 +1738,9 @@ function compressImage(file, max, q = 0.85) {
 }
 async function queryPosts(mod) {
   const run = (cols) => mod(sb.from("posts").select(cols));
-  let r = await run(POST_COLS + SND_COLS + ",views,post_likes(count),post_comments(count)");
-  if (r.error) r = await run(POST_COLS + ",views,post_likes(count),post_comments(count)");
-  if (r.error) r = await run(POST_COLS + ",post_likes(count),post_comments(count)");
-  if (r.error) r = await run(POST_COLS);
+  const r = await selectPosts(run);
   if (r.error) throw r.error;
-  return r.data.map(normPost).filter((p) => !social.blocked.has(p.uid));
+  return r.data.map(normPost).filter(canSee);
 }
 
 // comments sheet (replies + pictures)
@@ -1527,20 +1755,23 @@ function clearComImg() {
   img.removeAttribute("src");
   $("#comPrev").classList.add("hidden");
 }
-function setReply(id, user) {
+function setReply(id, user, isReply) {
   comReply = { id, user };
   $("#comReply span").textContent = "Replying to @" + user;
   $("#comReply").classList.remove("hidden");
-  $("#comIn").value = "@" + user + " ";
+  $("#comIn").value = isReply ? "@" + user + " " : "";
   $("#comIn").focus();
 }
-async function loadComments() {
-  comList.innerHTML = '<p class="cmt-empty">Loading...</p>';
+// silent = keep what is on screen until the new list arrives (used after sending / deleting)
+async function loadComments(silent, keepScroll) {
+  const forId = comId, was = comList.scrollTop;
+  if (!silent) comList.innerHTML = '<p class="cmt-empty">Loading...</p>';
   const q = (cols) => sb.from("post_comments").select(cols).eq("post_id", comId).order("created_at", { ascending: true });
   let r = await q(COM_BASE + ",image_url,parent_id,video_url");
   if (r.error) r = await q(COM_BASE + ",image_url,parent_id");
   if (r.error) r = await q(COM_BASE);
-  if (r.error) { comList.innerHTML = `<p class="cmt-empty">${esc(socialErr(r.error))}</p>`; return; }
+  if (forId !== comId) return;
+  if (r.error) { if (!silent) comList.innerHTML = `<p class="cmt-empty">${esc(socialErr(r.error))}</p>`; return; }
   r.data = r.data.filter((c) => !social.blocked.has(c.user_id));
   if (!r.data.length) { comList.innerHTML = '<p class="cmt-empty">No comments yet. Be the first.</p>'; return; }
   const me = MIXO.user && MIXO.user.id, owner = (postCache.get(String(comId)) || {}).uid;
@@ -1550,28 +1781,47 @@ async function loadComments() {
     const p = (Array.isArray(c.profiles) ? c.profiles[0] : c.profiles) || {};
     const u = p.username || "user";
     const av = p.avatar_url ? `<img src="${esc(p.avatar_url)}" alt="">` : esc(u[0].toUpperCase());
-    return `<div class="cmt"><div class="pc-av sm">${av}</div><div class="cb"><b>@${esc(u)}</b><span>${ago(c.created_at)}</span>${c.body ? `<p>${esc(c.body)}</p>` : ""}${c.image_url ? `<img class="cmt-img" src="${esc(c.image_url)}" alt="" loading="lazy">` : ""}${c.video_url ? `<video class="cmt-vid" src="${esc(c.video_url)}" controls playsinline preload="metadata"></video>` : ""}<button type="button" class="cmt-rep" data-top="${esc(topId)}" data-user="${esc(u)}">Reply</button>${(owner === me && c.user_id !== me) ? `<button type="button" class="cmt-vrep" data-top="${esc(topId)}" data-user="${esc(u)}">Reply with video</button>` : ""}${(c.user_id === me || owner === me) ? `<button type="button" class="cmt-del" data-cid="${esc(c.id)}" data-own="${c.user_id === me ? 1 : 0}" data-img="${esc(c.image_url || "")}" data-vid="${esc(c.video_url || "")}" aria-label="Delete comment">${icon("trash")}</button>` : ""}</div></div>`;
+    return `<div class="cmt"><div class="pc-av sm">${av}</div><div class="cb"><b>@${esc(u)}</b><span>${ago(c.created_at)}</span>${c.body ? `<p>${esc(c.body)}</p>` : ""}${c.image_url ? `<img class="cmt-img" src="${esc(c.image_url)}" alt="" loading="lazy">` : ""}${c.video_url ? `<video class="cmt-vid" src="${esc(c.video_url)}" controls playsinline preload="metadata"></video>` : ""}<button type="button" class="cmt-rep" data-top="${esc(topId)}" data-user="${esc(u)}" data-reply="${c.parent_id ? 1 : 0}">${icon("cmreply")}Reply</button>${(owner === me && c.user_id !== me) ? `<button type="button" class="cmt-vrep" data-top="${esc(topId)}" data-user="${esc(u)}">${icon("video")}Reply with video</button>` : ""}${(c.user_id === me || owner === me) ? `<button type="button" class="cmt-del" data-cid="${esc(c.id)}" data-own="${c.user_id === me ? 1 : 0}" data-img="${esc(c.image_url || "")}" data-vid="${esc(c.video_url || "")}" aria-label="Delete comment">${icon("trash")}</button>` : ""}</div></div>`;
   };
   comList.innerHTML = r.data.filter((c) => !c.parent_id).map((c) =>
     one(c, c.id) + (kids[c.id] ? `<div class="cmt-kids">${kids[c.id].map((k) => one(k, c.id)).join("")}</div>` : "")).join("");
-  comList.scrollTop = comList.scrollHeight;
+  comList.scrollTop = keepScroll ? was : comList.scrollHeight;
 }
 function openComments(id) {
   if (!MIXO.user || !sb) return toast("Log in to comment");
+  { const p0 = postCache.get(String(id)); if (p0 && p0.allowComments === false) return toast("Comments are turned off for this post"); }
   comId = id;
   clearReply(); clearComImg();
   $("#comIn").value = "";
+  $(".cpanel").classList.remove("full");
   comSheet.classList.remove("hidden");
   loadComments();
 }
 comSheet.onclick = (e) => { if (e.target.id === "comSheet") comSheet.classList.add("hidden"); };
+// drag the handle / title: up = full screen, down = back to normal, down again = close
+(function comDrag() {
+  const panel = $(".cpanel");
+  [$(".com-grab"), $(".cpanel h3")].forEach((el) => {
+    let y0 = null;
+    el.addEventListener("pointerdown", (e) => { y0 = e.clientY; try { el.setPointerCapture(e.pointerId); } catch (err) {} });
+    el.addEventListener("pointermove", (e) => {
+      if (y0 === null) return;
+      const dy = e.clientY - y0;
+      if (dy < -36) { panel.classList.add("full"); y0 = e.clientY; }
+      else if (dy > 36) { if (panel.classList.contains("full")) panel.classList.remove("full"); else comSheet.classList.add("hidden"); y0 = null; }
+    });
+    const end = () => { y0 = null; };
+    el.addEventListener("pointerup", end);
+    el.addEventListener("pointercancel", end);
+  });
+})();
 comList.addEventListener("click", (e) => {
   const d = e.target.closest(".cmt-del");
   if (d) return deleteComment(d);
   const v = e.target.closest(".cmt-vrep");
   if (v) return openCamera({ reply: { parent: v.dataset.top, user: v.dataset.user } });
   const b = e.target.closest(".cmt-rep");
-  if (b) setReply(b.dataset.top, b.dataset.user);
+  if (b) setReply(b.dataset.top, b.dataset.user, b.dataset.reply === "1");
 });
 $("#comReply button").onclick = () => { clearReply(); $("#comIn").value = ""; };
 $("#comPrev button").onclick = clearComImg;
@@ -1608,7 +1858,7 @@ $("#comForm").addEventListener("submit", async (e) => {
     $("#comIn").value = ""; clearReply(); clearComImg();
     const p = postCache.get(String(comId));
     if (p) { p.comments++; paintPost(comId); }
-    loadComments();
+    loadComments(true);
   } catch (err) { toast(socialErr(err)); }
   finally { btn.disabled = false; }
 });
@@ -1699,7 +1949,7 @@ async function deleteComment(btn) {
   const p = postCache.get(String(comId));
   const c = await sb.from("post_comments").select("id", { count: "exact", head: true }).eq("post_id", comId);
   if (p && !c.error && typeof c.count === "number") { p.comments = c.count; paintPost(comId); }
-  loadComments();
+  loadComments(true, true);
 }
 
 // ---------- explore: Pictures / Topics / Trending ----------
@@ -1717,9 +1967,12 @@ async function loadExplore() {
   try {
     let list = await fetchPosts(tab === 0 ? ["photo"] : tab === 1 ? ["topic"] : ["photo", "topic"]);
     if (tab !== exTab) return;
-    if (tab === 2) list.sort((a, b) => (b.likes * 2 + b.comments) - (a.likes * 2 + a.comments) || new Date(b.time) - new Date(a.time));
+    if (tab === 2) {   // Trending: topics and photos with 5K likes or more, most liked first
+      list = list.filter((p) => p.likes >= 5000);
+      list.sort((a, b) => b.likes - a.likes || b.comments - a.comments || new Date(b.time) - new Date(a.time));
+    }
     box.innerHTML = list.length ? '<div class="pcl">' + list.map(postCard).join("") + "</div>"
-      : exEmpty(["No pictures yet.<br>Photo posts will appear here.", "No topics yet.<br>Topics will appear here.", "Nothing trending yet."][tab]);
+      : exEmpty(["No pictures yet.<br>Photo posts will appear here.", "No topics yet.<br>Topics will appear here.", "Nothing trending yet.<br>Topics and photos with 5K+ likes show up here."][tab]);
   } catch (err) { if (tab === exTab) box.innerHTML = exEmpty(esc(socialErr(err))); }
 }
 $$("#explore .seg button").forEach((b, i) => b.addEventListener("click", () => { exTab = i; loadExplore(); }));
@@ -1781,7 +2034,7 @@ $("#pGrid").addEventListener("click", (e) => {
   const t = e.target.closest(".pt");
   if (!t) return;
   const pv = postCache.get(String(t.dataset.id));
-  if (pv && pv.type === "video") return openVidCard(pv.id);
+  if (pv && pv.type === "video") return openVidCard(pv.id, gridIds("#pGrid .pt"));
   go("home");
   const c = $(`.clip[data-id="${t.dataset.id}"]`);
   if (c) c.scrollIntoView(); else toast("Open it from the feed");
@@ -1790,6 +2043,86 @@ $("#pGrid").addEventListener("click", (e) => {
 // ============ INBOX: real messages, instant delivery, message requests ============
 const inbox = { convs: [], profiles: new Map(), unread: new Map(), lastKind: new Map(), tab: "msg", loaded: false, error: "" };
 const chat = { uid: null, conv: null, user: null, msgs: [], open: false, sending: false };
+
+// ----- ACTIVITY: everything that happens to you (likes, saves, comments, follows, news from MIXO, "someone is online") -----
+var BELL = '<svg class="ic bell" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 17v-6a6 6 0 0 1 12 0v6l2 2H4z"/><path d="M10 21a2 2 0 0 0 4 0"/></svg>';
+var ACT = { local: [], remote: [], seen: 0, busy: false, timer: null };
+const actKey = (n) => "mixo_" + n + "_" + (meId() || "guest");
+function actLoad() {
+  try { const j = JSON.parse(localStorage.getItem(actKey("act")) || "[]"); ACT.local = Array.isArray(j) ? j.slice(0, 50) : []; } catch (e) { ACT.local = []; }
+  ACT.local.forEach((x) => { if (!x.key) x.key = x.id || "l" + x.at; });
+  let s = 0;
+  try { s = Number(localStorage.getItem(actKey("actseen"))) || 0; } catch (e) {}
+  if (!s) { s = Date.now(); try { localStorage.setItem(actKey("actseen"), String(s)); } catch (e) {} }   // first run: old history isn't "new"
+  ACT.seen = s;
+  ACT.remote = [];
+}
+function actSave() { try { localStorage.setItem(actKey("act"), JSON.stringify(ACT.local.slice(0, 50))); } catch (e) {} }
+function actItems() { return ACT.local.concat(ACT.remote).sort((x, y) => y.at - x.at).slice(0, 80); }
+function actUnread() { return actItems().filter((x) => x.at > ACT.seen).length; }
+function actMarkSeen() {
+  ACT.seen = Math.max(Date.now(), ...actItems().map((x) => x.at));
+  try { localStorage.setItem(actKey("actseen"), String(ACT.seen)); } catch (e) {}
+}
+function actAdd(item) {
+  ACT.local.unshift(Object.assign({ key: "l" + Date.now() + Math.random().toString(36).slice(2, 6), at: Date.now() }, item));
+  ACT.local = ACT.local.slice(0, 50);
+  actSave();
+  renderInbox();
+}
+// pull what happened to you from Supabase: likes / saves / comments / replies / follows on your stuff + announcements
+async function refreshActivity() {
+  if (!sb || !MIXO.user || ACT.busy) return;
+  ACT.busy = true;
+  try {
+    const me = MIXO.user.id, lim = 60;
+    const run = async (p) => { try { const r = await p; if (r.error) { console.warn("activity:", r.error.message); return []; } return r.data || []; } catch (e) { return []; } };
+    const mineP = "posts!inner(user_id,type,media_url)";
+    const cols = "id,post_id,user_id,body,image_url,video_url,parent_id,created_at";
+    const myc = await run(sb.from("post_comments").select("id").eq("user_id", me).order("created_at", { ascending: false }).limit(100));
+    const [likes, saves, coms, reps, folls, news] = await Promise.all([
+      run(sb.from("post_likes").select("post_id,user_id,created_at," + mineP).eq("posts.user_id", me).neq("user_id", me).order("created_at", { ascending: false }).limit(lim)),
+      run(sb.from("post_saves").select("post_id,user_id,created_at," + mineP).eq("posts.user_id", me).neq("user_id", me).order("created_at", { ascending: false }).limit(lim)),
+      run(sb.from("post_comments").select(cols + "," + mineP).eq("posts.user_id", me).neq("user_id", me).order("created_at", { ascending: false }).limit(lim)),
+      myc.length ? run(sb.from("post_comments").select(cols + ",posts(user_id,type,media_url)").in("parent_id", myc.map((x) => x.id)).neq("user_id", me).order("created_at", { ascending: false }).limit(lim)) : Promise.resolve([]),
+      run(sb.from("follows").select("follower_id,created_at").eq("following_id", me).order("created_at", { ascending: false }).limit(30)),
+      run(sb.from("announcements").select("id,title,body,created_at").order("created_at", { ascending: false }).limit(20)),
+    ]);
+    const ts = (d) => new Date(d).getTime() || 0;
+    const postOf = (r) => { const p = Array.isArray(r.posts) ? r.posts[0] : r.posts; return { id: r.post_id, type: (p && p.type) || "video", url: (p && p.media_url) || "" }; };
+    const items = [];
+    const group = (rows, kind) => {
+      const m = new Map();
+      rows.forEach((r) => {
+        if (social.blocked.has(r.user_id)) return;
+        let g = m.get(r.post_id);
+        if (!g) { g = { key: kind + ":" + r.post_id, kind, at: 0, actors: [], post: postOf(r) }; m.set(r.post_id, g); }
+        g.at = Math.max(g.at, ts(r.created_at));
+        if (!g.actors.includes(r.user_id)) g.actors.push(r.user_id);
+      });
+      m.forEach((g) => items.push(g));
+    };
+    group(likes, "like");
+    group(saves, "save");
+    const mine = new Set(myc.map((x) => x.id)), seenC = new Set();
+    coms.concat(reps).forEach((r) => {
+      if (seenC.has(r.id) || social.blocked.has(r.user_id)) return;
+      seenC.add(r.id);
+      const txt = (r.body || "").trim() || (r.video_url ? "sent a video reply" : r.image_url ? "sent a photo" : "");
+      items.push({ key: "c:" + r.id, kind: mine.has(r.parent_id) ? "reply" : "comment", at: ts(r.created_at), actors: [r.user_id], post: postOf(r), text: txt });
+    });
+    folls.forEach((r) => { if (!social.blocked.has(r.follower_id)) items.push({ key: "f:" + r.follower_id, kind: "follow", at: ts(r.created_at), actors: [r.follower_id] }); });
+    news.forEach((r) => items.push({ key: "n:" + r.id, kind: "news", at: ts(r.created_at), title: r.title || "MIXO", text: r.body || "" }));
+    const need = [...new Set(items.flatMap((x) => x.actors || []))].filter((id) => !inbox.profiles.has(id));
+    if (need.length) {
+      const pr = await run(sb.from("profiles").select("id,username,display_name,avatar_url,bio,country").in("id", need));
+      pr.forEach((p) => inbox.profiles.set(p.id, p));
+    }
+    ACT.remote = items.sort((x, y) => y.at - x.at).slice(0, 80);
+    renderInbox();
+  } finally { ACT.busy = false; }
+}
+document.addEventListener("visibilitychange", () => { if (!document.hidden) refreshActivity(); });
 let rtChannel = null, rtOK = false, inboxTimer = null, pollTimer = null;
 
 const meId = () => (MIXO.user ? MIXO.user.id : null);
@@ -1855,12 +2188,17 @@ function renderInbox() {
   const reqs = inbox.convs.filter(isReq);
   const msgs = inbox.convs.filter(isMsg);
   const unreadMsgs = msgs.reduce((n, c) => n + (inbox.unread.get(c.id) || 0), 0);
-  setBadge(unreadMsgs + reqs.length);
+  const unreadAct = actUnread();
+  inbox.base = unreadMsgs + reqs.length;
+  setBadge(inbox.base + unreadAct);
   $("#inTabMsg").classList.toggle("on", inbox.tab === "msg");
   $("#inTabReq").classList.toggle("on", inbox.tab === "req");
+  $("#inTabAct").classList.toggle("on", inbox.tab === "act");
   $("#inTabReq").innerHTML = "Requests" + (reqs.length ? ` <i class="bdg">${reqs.length}</i>` : "");
-  const list = inbox.tab === "req" ? reqs : msgs;
+  $("#inTabAct").innerHTML = "Activity" + (unreadAct ? ` <i class="bdg">${unreadAct}</i>` : "");
   const box = $("#inList");
+  if (inbox.tab === "act") return renderActivity(box);
+  const list = inbox.tab === "req" ? reqs : msgs;
   if (inbox.error) { box.innerHTML = `<p class="hint c">${esc(inbox.error)}</p>`; return; }
   if (!list.length) {
     box.innerHTML = `<div class="empty">${icon("inbox").replace('class="ic"', 'class="ic big"')}<p>${inbox.tab === "req" ? "No message requests." : MIXO.user ? "No messages yet.<br>Follow people and say hello." : "Log in to see your messages."}</p></div>`;
@@ -1876,9 +2214,64 @@ function renderInbox() {
 }
 $("#inTabMsg").addEventListener("click", () => { inbox.tab = "msg"; renderInbox(); });
 $("#inTabReq").addEventListener("click", () => { inbox.tab = "req"; renderInbox(); });
+$("#inTabAct").addEventListener("click", () => { inbox.tab = "act"; renderInbox(); refreshActivity(); });
+
+const ACT_ICON = { like: "heart", save: "save", comment: "comment", reply: "comment", follow: "userplus" };
+function actRow(x) {
+  const unread = x.at > ACT.seen;
+  const time = ago(x.at);
+  if (x.kind === "news" || x.kind === "online") {
+    const ic = x.kind === "news" ? '<svg class="ic"><use href="#i-mega"/></svg>' : BELL;
+    return `<button type="button" class="irow arow news${unread ? " unread" : ""}" data-k="${esc(x.key)}"><div class="aic">${ic}</div><div class="itx"><b>${esc(x.title)}</b><span>${esc(x.text)}</span></div><div class="imeta"><small>${time}</small>${unread ? '<i class="adot"></i>' : ""}</div></button>`;
+  }
+  const id0 = x.actors[0], p = inbox.profiles.get(id0) || {};
+  const name = p.display_name || p.username || "Someone";
+  const more = x.actors.length > 1 ? ` and ${x.actors.length - 1} other${x.actors.length > 2 ? "s" : ""}` : "";
+  const noun = x.post ? (x.post.type === "video" ? "video" : x.post.type === "photo" ? "photo" : "topic") : "";
+  const prev = (x.text || "").slice(0, 70);
+  const what = x.kind === "like" ? "liked your " + noun
+    : x.kind === "save" ? "saved your " + noun
+    : x.kind === "follow" ? "started following you"
+    : (x.kind === "reply" ? "replied to your comment" : "commented on your " + noun) + (prev ? ": " + prev : "");
+  const thumb = !x.post ? "" : x.post.type === "video" ? `<video class="athumb" src="${esc(x.post.url)}#t=0.1" muted playsinline preload="metadata"></video>`
+    : x.post.type === "photo" ? `<img class="athumb" src="${esc(x.post.url)}" alt="">` : '<div class="athumb tp">Aa</div>';
+  return `<button type="button" class="irow arow${unread ? " unread" : ""}" data-k="${esc(x.key)}"><div class="aav"><div class="lav" data-uid="${esc(id0)}">${esc(name[0].toUpperCase())}</div><i class="abg k-${x.kind}"><svg class="ic"><use href="#i-${ACT_ICON[x.kind]}"/></svg></i></div><div class="itx"><b>${esc(name + more)}</b><span>${esc(what)}</span></div><div class="imeta"><small>${time}</small>${unread ? '<i class="adot"></i>' : ""}</div>${thumb}</button>`;
+}
+function renderActivity(box) {
+  const items = actItems();
+  if (!items.length) {
+    box.innerHTML = `<div class="empty">${BELL.replace('class="ic bell"', 'class="ic big bell"')}<p>No activity yet.<br>Likes, saves, comments, new followers and news from MIXO will show up here.</p></div>`;
+    return;
+  }
+  box.innerHTML = items.map(actRow).join("");
+  $$("#inList .aav .lav").forEach((el) => { const p = inbox.profiles.get(el.dataset.uid); if (p && p.avatar_url) setAv(el, p.avatar_url, p.display_name || p.username); });
+  // opening the tab counts as reading everything (only when the Inbox page is really on screen)
+  if ($("#inbox").classList.contains("on") && items.some((x) => x.at > ACT.seen)) {
+    actMarkSeen();
+    setBadge(inbox.base || 0);
+    $("#inTabAct").innerHTML = "Activity";
+  }
+}
+function actProfile(uid) {
+  const p = inbox.profiles.get(uid) || {};
+  openCreator({ uid, user: p.username || "user", name: p.display_name || p.username || "User", avatar: p.avatar_url, bio: p.bio || "", country: p.country || "", profile: { following: 0, followers: 0, likes: 0 } });
+}
+async function actOpen(k, row, onPic) {
+  const x = actItems().find((i) => i.key === k);
+  if (!x) return;
+  if (onPic && x.actors && x.actors.length) return actProfile(x.actors[0]);
+  if (x.kind === "online") return go("connect");
+  if (x.kind === "news") return row.classList.toggle("open");
+  if (x.kind === "follow") return actProfile(x.actors[0]);
+  if (x.post) {
+    await openPostView(x.post.id);
+    if (x.kind === "comment" || x.kind === "reply") openComments(x.post.id);
+  }
+}
 $("#inList").addEventListener("click", (e) => {
   const row = e.target.closest(".irow");
   if (!row) return;
+  if (row.dataset.k) return actOpen(row.dataset.k, row, !!e.target.closest(".aav"));   // an Activity row (picture = their profile)
   const c = inbox.convs.find((x) => x.id === row.dataset.c);
   if (c && inbox.profiles.get(otherOf(c))) openChat(inbox.profiles.get(otherOf(c)));
 });
@@ -2443,7 +2836,12 @@ function onReactEvent(p) {
 }
 function startInbox() {
   if (!sb || !MIXO.user || rtChannel) return;
+  actLoad();
+  refreshActivity();
+  clearInterval(ACT.timer);
+  ACT.timer = setInterval(() => { if (!document.hidden) refreshActivity(); }, 45000);
   refreshInbox();
+  cxWatch();   // if "Notify me" is on, keep listening for people coming online
   rtChannel = sb.channel("inbox-" + meId())
     .on("postgres_changes", { event: "*", schema: "public", table: "messages" }, onMsgEvent)
     .on("postgres_changes", { event: "*", schema: "public", table: "conversations" }, refreshInboxSoon)
@@ -2465,6 +2863,8 @@ function startInbox() {
 }
 function stopInbox() {
   connectLeave();
+  cxCloseCh();
+  ACT.local = []; ACT.remote = []; clearInterval(ACT.timer);
   if (call.state !== "idle") callEnd("ended");
   if (sb) { if (rtChannel) sb.removeChannel(rtChannel); if (presCh) sb.removeChannel(presCh); if (callCh) sb.removeChannel(callCh); }
   rtChannel = null; presCh = null; callCh = null; rtOK = false; online = new Set();
@@ -2654,6 +3054,127 @@ function openFromHash() {
   openPostView(decodeURIComponent(m[1]));
 }
 
+// ============ STORIES (status, last 24 hours) ============
+const ST = { groups: [], gi: 0, i: 0, raf: 0, t0: 0, dur: 5000 };
+const stSeen = () => { try { return JSON.parse(localStorage.getItem("mixoSeen") || "{}"); } catch (e) { return {}; } };
+function stFlash(msg) { const t = $("#toast"); t.textContent = msg; t.classList.add("show"); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove("show"), 2400); }
+async function loadStories() {
+  const bar = $("#stBar");
+  if (!sb || !MIXO.user) { ST.groups = []; bar.innerHTML = ""; return; }
+  const since = new Date(Date.now() - 864e5).toISOString();
+  const r = await sb.from("stories").select("id,user_id,media_url,kind,caption,created_at,profiles!user_id(username,display_name,avatar_url)").gte("created_at", since).order("created_at", { ascending: true });
+  const rows = r.error ? [] : r.data.filter((s) => !social.blocked.has(s.user_id));
+  const by = new Map();
+  rows.forEach((s) => {
+    const p = (Array.isArray(s.profiles) ? s.profiles[0] : s.profiles) || {};
+    let g = by.get(s.user_id);
+    if (!g) by.set(s.user_id, (g = { uid: s.user_id, user: p.username || "user", avatar: p.avatar_url, items: [] }));
+    g.items.push(s);
+  });
+  const me = MIXO.user.id, last = (g) => new Date(g.items[g.items.length - 1].created_at);
+  ST.groups = [...by.values()].sort((a, b) => (b.uid === me) - (a.uid === me) || (social.following.has(b.uid) - social.following.has(a.uid)) || (last(b) - last(a)));
+  const seen = stSeen(), pr = MIXO.profile || {};
+  const ring = (g) => (g.items.some((s) => !seen[s.id]) ? "new" : "old");
+  const mine = ST.groups.findIndex((g) => g.uid === me);
+  let h = `<div class="stb" data-i="${mine}"><div class="sr ${mine >= 0 ? ring(ST.groups[mine]) : "none"}"><div class="sa" data-uid="${esc(me)}"></div><button type="button" class="stplus" data-add="1" aria-label="Add story">+</button></div><span>Your story</span></div>`;
+  ST.groups.forEach((g, i) => { if (g.uid !== me) h += `<div class="stb" data-i="${i}"><div class="sr ${ring(g)}"><div class="sa" data-uid="${esc(g.uid)}"></div></div><span>${esc(g.user)}</span></div>`; });
+  bar.innerHTML = h;
+  $$(".sa", bar).forEach((el) => { const g = ST.groups.find((x) => x.uid === el.dataset.uid); if (g) setAv(el, g.avatar, g.user); else setAv(el, pr.avatar_url, pr.username || "M"); });
+}
+$("#stBar").addEventListener("click", (e) => {
+  if (e.target.closest("[data-add]")) return $("#stFile").click();
+  const b = e.target.closest(".stb");
+  if (!b) return;
+  const i = +b.dataset.i;
+  if (i >= 0) openStories(i); else $("#stFile").click();
+});
+function openStories(gi) {
+  const g = ST.groups[gi];
+  if (!g) return;
+  const seen = stSeen(), k = g.items.findIndex((s) => !seen[s.id]);
+  ST.gi = gi; ST.i = k < 0 ? 0 : k;
+  pauseAll();
+  $("#stView").classList.remove("hidden");
+  stShow();
+}
+function stClose() {
+  cancelAnimationFrame(ST.raf);
+  $$("#stvMedia video").forEach((v) => v.pause());
+  $("#stvMedia").innerHTML = "";
+  $("#stView").classList.add("hidden");
+  loadStories();
+  if ($("#home").classList.contains("on") && MIXO.current) MIXO.current.play().catch(() => {});
+}
+function stShow() {
+  cancelAnimationFrame(ST.raf);
+  const g = ST.groups[ST.gi], s = g.items[ST.i];
+  const seen = stSeen(); seen[s.id] = 1;
+  try { localStorage.setItem("mixoSeen", JSON.stringify(seen)); } catch (e) {}
+  $("#stvProg").innerHTML = g.items.map((_, n) => `<i class="${n < ST.i ? "done" : ""}"><b></b></i>`).join("");
+  setAv($("#stvAv"), g.avatar, g.user);
+  $("#stvName").textContent = "@" + g.user;
+  $("#stvTime").textContent = ago(s.created_at);
+  $("#stvDel").classList.toggle("hidden", g.uid !== MIXO.user.id);
+  $("#stvCap").textContent = s.caption || "";
+  $("#stvMedia").innerHTML = s.kind === "video" ? `<video src="${esc(s.media_url)}" playsinline></video>` : `<img src="${esc(s.media_url)}" alt="">`;
+  const v = $("#stvMedia video"), fill = $$("#stvProg i b")[ST.i];
+  ST.t0 = performance.now();
+  if (v) { v.onended = stNext; v.play().catch(() => { v.muted = true; v.play().catch(() => {}); }); }
+  const tick = () => {
+    const p = v ? (v.duration ? v.currentTime / v.duration : 0) : (performance.now() - ST.t0) / ST.dur;
+    fill.style.width = Math.min(100, p * 100) + "%";
+    if (!v && p >= 1) return stNext();
+    ST.raf = requestAnimationFrame(tick);
+  };
+  tick();
+}
+function stNext() {
+  const g = ST.groups[ST.gi];
+  if (ST.i < g.items.length - 1) ST.i++;
+  else if (ST.gi < ST.groups.length - 1) { ST.gi++; ST.i = 0; }
+  else return stClose();
+  stShow();
+}
+function stPrev() {
+  if (ST.i > 0) ST.i--;
+  else if (ST.gi > 0) { ST.gi--; ST.i = 0; }
+  stShow();
+}
+$("#stvNext").onclick = stNext;
+$("#stvPrev").onclick = stPrev;
+$("#stvX").onclick = stClose;
+$("#stvDel").onclick = async () => {
+  const s = ST.groups[ST.gi].items[ST.i];
+  cancelAnimationFrame(ST.raf);
+  const v = $("#stvMedia video"); if (v) v.pause();
+  const ok = await confirmBox("Delete this story?", "It will be removed for everyone.", "Delete");
+  if (!ok) return stShow();
+  const r = await sb.from("stories").delete().eq("id", s.id).select("id");
+  if (r.error || !r.data || !r.data.length) stFlash("Couldn't delete the story.");
+  else { const p = storagePath(s.media_url, s.kind === "video" ? "videos" : "avatars"); if (p) sb.storage.from(s.kind === "video" ? "videos" : "avatars").remove([p]); }
+  stClose();
+};
+async function postStory(file) {
+  if (!sb || !MIXO.user || !file) return;
+  const isVid = /^video\//.test(file.type) || /\.(mp4|mov|webm|m4v)$/i.test(file.name || "");
+  if (isVid && file.size > MAX_MB * 1048576) return stFlash("That video is over " + MAX_MB + " MB.");
+  stFlash("Posting your story...");
+  let bucket = "videos", path = "";
+  try {
+    let blob = file, ext = ((file.name || "").split(".").pop() || "mp4").toLowerCase().replace(/[^a-z0-9]/g, "") || "mp4", type = file.type || "video/mp4";
+    if (!isVid) { blob = await compressImage(file, 1080, 0.85); bucket = "avatars"; ext = "jpg"; type = "image/jpeg"; }
+    path = MIXO.user.id + "/story-" + Date.now() + "." + ext;
+    const up = await sb.storage.from(bucket).upload(path, blob, { contentType: type });
+    if (up.error) throw up.error;
+    const url = sb.storage.from(bucket).getPublicUrl(path).data.publicUrl;
+    const ins = await sb.from("stories").insert({ user_id: MIXO.user.id, media_url: url, kind: isVid ? "video" : "image" });
+    if (ins.error) { await sb.storage.from(bucket).remove([path]); throw ins.error; }
+    stFlash("Story posted");
+    loadStories();
+  } catch (err) { stFlash(/stories/i.test(err.message || "") ? "Run mixo_stories_and_post_options.sql in Supabase first." : niceError(err.message)); }
+}
+$("#stFile").onchange = (e) => { const f = e.target.files[0]; e.target.value = ""; if (f) { closeSound(); postStory(f); } };
+
 // ============ VIEWS (footprints) ============
 const viewedSet = new Set();
 function paintViews(id) {
@@ -2711,7 +3232,7 @@ async function sendVideoReply(r, file) {
   const c = await sb.from("post_comments").select("id", { count: "exact", head: true }).eq("post_id", comId);
   if (p && !c.error && typeof c.count === "number") { p.comments = c.count; paintPost(comId); }
   toast("Video reply posted");
-  loadComments();
+  loadComments(true);
 }
 
 
@@ -2762,7 +3283,7 @@ $("#cGrid").addEventListener("click", (e) => {
   const t = e.target.closest(".pt");
   if (!t) return;
   const p = postCache.get(String(t.dataset.id));
-  if (p) openVidCard(p.id);
+  if (p) openVidCard(p.id, gridIds("#cGrid .pt"));
 });
 
 
@@ -2771,8 +3292,12 @@ $("#cGrid").addEventListener("click", (e) => {
 // Token function: deploy supabase/functions/agora-token (included) so calls stay secure. If you leave
 // App ID empty, calls fall back to the old peer-to-peer WebRTC.
 var AGORA = { appId: "", tokenFn: "agora-token" };
-// Payments: paste your Stripe Payment Links here (one per plan). Premium itself lives in premium_users.
-var PAY_LINKS = { weekly: "", monthly: "", yearly: "" };
+// Payments: Polar checkout links (one per plan). Premium itself lives in premium_users.
+var PAY_LINKS = {
+  weekly: "https://sandbox-api.polar.sh/v1/checkout-links/polar_cl_1OaBrPFlf1p9zTpa8XLvF58e6bwWp6yjISewL3SK8yA/redirect",
+  monthly: "https://sandbox-api.polar.sh/v1/checkout-links/polar_cl_r5rjdKffh3DnsCd5ln65NwFNk1aBXmCbMjMHz1MziNX/redirect",
+  yearly: "https://sandbox-api.polar.sh/v1/checkout-links/polar_cl_TjEnzlV5dEAuLVp63nZvMaQSk6Sm412mVZyhR3eWuNA/redirect"
+};
 var PLANS = [
   { id: "weekly", name: "Weekly", price: "2.99", sub: "No discount" },
   { id: "monthly", name: "Monthly", price: "7.99", save: "Save 38%" },
@@ -2855,7 +3380,7 @@ function cxLoadFilt() {
   } catch (e) {}
   return { scope: "earth", countries: [], langs: [], interests: [] };
 }
-var CX = { ch: null, all: [], pool: [], deck: [], passed: new Set(), filt: cxLoadFilt(), premium: false, until: null, quota: null, state: "idle", tried: new Map(), t0: 0, next: true, busy: false, searchT: 0, tick: 0, recent: [], views: 0, init: false };
+var CX = { ch: null, all: [], pool: [], deck: [], passed: new Set(), filt: cxLoadFilt(), premium: false, until: null, quota: null, state: "idle", tried: new Map(), t0: 0, next: true, busy: false, searchT: 0, tick: 0, recent: [], views: 0, init: false, live: false };
 var ag = { client: null, track: null };
 
 const cxFiltCustom = () => CX.premium && !!(CX.filt.countries.length || CX.filt.langs.length || CX.filt.interests.length);
@@ -2949,6 +3474,41 @@ function cxApply() {
   cxPaintFilters();
   cxDeckSync();
   if (CX.state === "searching") cxSearch();
+  cxCheckNotify();
+}
+
+// ---------- NOTIFY ME: nobody online -> ask to be told in Inbox > Activity ----------
+const cxNotifyKey = () => "mixo_cx_notify_" + (meId() || "guest");
+function cxNotifyOn() { try { return localStorage.getItem(cxNotifyKey()) === "1"; } catch (e) { return false; } }
+function cxNotifySet(v) { try { if (v) localStorage.setItem(cxNotifyKey(), "1"); else localStorage.removeItem(cxNotifyKey()); } catch (e) {} }
+function cxCheckNotify() {
+  if (!CX.pool.length || !cxNotifyOn()) return;
+  cxNotifySet(false);   // one alert per tap
+  const n = CX.pool.length, m = CX.pool[0];
+  actAdd({
+    kind: "online",
+    title: n > 1 ? n + " people are online" : (m.n || m.u || "Someone") + " is online",
+    text: "Tap here to connect with " + "them" + " now.",
+  });
+  toast("Someone is online! Check Activity.");
+  if (!CX.live) cxCloseCh();   // we were only listening in the background
+}
+function cxNotifyTap() {
+  if (!sb || !MIXO.user) return toast("Log in first.");
+  if (cxNotifyOn()) { cxNotifySet(false); toast("Notification turned off."); }
+  else { cxNotifySet(true); toast("Done. We'll tell you in Activity when someone is online."); cxWatch(); }
+  cxRenderDeck();
+}
+// listen for people coming online without announcing ourselves (used when Notify me is on and we're not on Connect)
+function cxOpenCh() {
+  if (CX.ch || !sb || !MIXO.user) return;
+  CX.ch = sb.channel("mixo-connect", { config: { presence: { key: meId() } } });
+  CX.ch.on("presence", { event: "sync" }, cxSync).subscribe(async (s) => { if (s === "SUBSCRIBED" && CX.live) await cxTrack(); });
+}
+function cxWatch() { if (cxNotifyOn()) cxOpenCh(); }
+function cxCloseCh() {
+  if (CX.ch && sb) { try { sb.removeChannel(CX.ch); } catch (e) {} }
+  CX.ch = null; CX.all = []; CX.pool = [];
 }
 
 // ---------- the swipe deck: people online ----------
@@ -2978,12 +3538,40 @@ function personCard(m, idx) {
     </div>
     <button type="button" class="pc-call" data-a="call">${cxCallLabel(m)}</button></article>`;
 }
+// "NO ONE IS ONLINE" card: people icon, title in the middle of the card, Notify me button at the bottom
+function emptyCard() {
+  const on = cxNotifyOn();
+  const art = `<svg viewBox="70 38 260 178" aria-hidden="true">
+    <defs>
+      <linearGradient id="neB" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#46d8ff"/><stop offset="1" stop-color="#2a5bff"/></linearGradient>
+      <linearGradient id="neP" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#c86bff"/><stop offset="1" stop-color="#5a2bff"/></linearGradient>
+      <linearGradient id="neX" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#e3d9ff"/><stop offset="1" stop-color="#9a88ff"/></linearGradient>
+      <filter id="neG" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="3.5" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    </defs>
+    <g filter="url(#neG)">
+      <circle cx="262" cy="92" r="35" fill="url(#neP)"/>
+      <path d="M212 196 C212 142 238 130 262 130 C290 130 314 144 314 196 Z" fill="url(#neP)"/>
+      <circle cx="146" cy="84" r="40" fill="url(#neB)"/>
+      <path d="M86 202 C86 142 116 126 146 126 C178 126 208 142 208 202 Z" fill="url(#neB)"/>
+      <circle cx="200" cy="162" r="42" fill="rgba(110,90,255,.35)" stroke="url(#neX)" stroke-width="9"/>
+      <path d="M170 132 L230 192" stroke="url(#neX)" stroke-width="9" stroke-linecap="round"/>
+    </g>
+  </svg>`;
+  return `<article class="pc noone">
+    <span class="pc-up" aria-hidden="true">${svgI("up")}</span>
+    <div class="ne-mid">
+      <div class="ne-art">${art}</div>
+      <h3 class="ne-title">NO ONE IS ONLINE</h3>
+    </div>
+    <button type="button" class="ne-btn${on ? " on" : ""}" data-a="notify" aria-pressed="${on}">${BELL}<span>${on ? "NOTIFICATION ON" : "NOTIFY ME"}</span></button>
+  </article>`;
+}
 function cxRenderDeck() {
   const box = $("#cxDeck");
   if (!box) return;
   const keep = box.scrollLeft;
   box.innerHTML = CX.deck.length ? CX.deck.map(personCard).join("")
-    : `<article class="pc empty"><div class="radar">${svgI("globe")}</div><b>No one online yet</b><span>New people will show up here.<br>Swipe right to see each one.</span></article>`;
+    : emptyCard();
   CX.deck.forEach((m, i) => { const el = box.children[i]; if (el) { const r = el.querySelector(".cx-ring"); paintFrame(r, m.f, !!m.p); } });
   box.scrollLeft = keep;
 }
@@ -3021,6 +3609,7 @@ async function cxDeckClick(e) {
   const card = e.target.closest(".pc");
   if (!card) return;
   if (e.target.closest('[data-a="more"]')) return card.classList.toggle("open");
+  if (e.target.closest('[data-a="notify"]')) return cxNotifyTap();
   const b = e.target.closest('[data-a="call"]');
   if (!b) return;
   const m = CX.deck.find((x) => x.id === card.dataset.id);
@@ -3056,9 +3645,9 @@ function connectEnter() {
   loadViewCount();
   clearInterval(CX.tick);
   CX.tick = setInterval(() => { if (CX.quota && CX.quota.resets_at && new Date(CX.quota.resets_at) < new Date()) loadQuota(); }, 30000);
-  if (CX.ch) return;
-  CX.ch = sb.channel("mixo-connect", { config: { presence: { key: meId() } } });
-  CX.ch.on("presence", { event: "sync" }, cxSync).subscribe(async (s) => { if (s === "SUBSCRIBED") await cxTrack(); });
+  CX.live = true;
+  if (CX.ch) { cxTrack(); cxSync(); return; }   // already listening (Notify me): now announce ourselves too
+  cxOpenCh();
 }
 function connectLeave() {
   if (!CX) return;
@@ -3066,8 +3655,10 @@ function connectLeave() {
   clearTimeout(CX.searchT);
   CX.next = false;
   if (CX.state === "searching") { CX.state = "idle"; cxPaintStart(); }
-  if (CX.ch && sb) { try { sb.removeChannel(CX.ch); } catch (e) {} }
-  CX.ch = null; CX.all = []; CX.pool = []; CX.deck = []; CX.passed = new Set(); CX.far = 0;
+  CX.live = false;
+  if (CX.ch && cxNotifyOn()) { try { CX.ch.untrack(); } catch (e) {} }   // stop showing up as online, keep listening for Notify me
+  else cxCloseCh();
+  CX.all = []; CX.pool = []; CX.deck = []; CX.passed = new Set(); CX.far = 0;
 }
 
 // ---------- START TALKING: find someone online and ring them ----------
@@ -3494,7 +4085,7 @@ $("#plGo").onclick = () => {
   if (!MIXO.user) return toast("Log in to get Premium.");
   const link = PAY_LINKS[PL.sel];
   if (!link) return toast("Payments aren't connected yet.");
-  location.href = link + (link.includes("?") ? "&" : "?") + "client_reference_id=" + encodeURIComponent(meId());
+  location.href = link + (link.includes("?") ? "&" : "?") + "reference_id=" + encodeURIComponent(meId());
 };
 
 $("#cxPrem").onclick = () => openPlans();
