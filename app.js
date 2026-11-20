@@ -4090,3 +4090,337 @@ $("#plGo").onclick = () => {
 
 $("#cxPrem").onclick = () => openPlans();
 $("#cxUpgrade").onclick = () => openPlans("limit");
+
+// ============ SETTINGS: all the pages behind the Settings screen ============
+const LS = { get: (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } }, set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} } };
+const sErr = (e) => { const m = (e && e.message) || ""; return /does not exist|schema cache|could not find|column|policy/i.test(m) ? "Run mixo_settings.sql in Supabase first." : m || "Something went wrong."; };
+const settingsOpen = () => !$("#settingsPg").classList.contains("hidden");
+function openSettings() {
+  if (!MIXO.user) return toast("Log in with a real account first.");
+  $("#settingsPg").classList.remove("hidden");
+}
+$("#setBtn").onclick = openSettings;
+$("#stBack").onclick = () => $("#settingsPg").classList.add("hidden");
+$("#subBack").onclick = () => $("#setSub").classList.add("hidden");
+$("#stLogout").onclick = () => $("#logoutBtn").onclick();
+function sub(title, html, mount) {
+  $("#subTitle").textContent = title;
+  $("#subBody").innerHTML = html;
+  $("#setSub").classList.remove("hidden");
+  $("#setSub").scrollTop = 0;
+  if (mount) mount($("#subBody"));
+}
+const toggleHTML = (id, on, label, note) => `<div class="strow"><div>${label}${note ? `<small>${note}</small>` : ""}</div><button type="button" class="tgl ${on ? "on" : ""}" id="${id}" aria-label="${label}"></button></div>`;
+async function saveProfile(patch) {
+  const r = await sb.from("profiles").update(patch).eq("id", meId()).select().single();
+  if (r.error) { toast(sErr(r.error)); return false; }
+  MIXO.profile = r.data;
+  return true;
+}
+const PG = {};
+
+// ----- Security And Permissions -----
+const PERMS = [["camera", "Camera"], ["microphone", "Microphone"], ["geolocation", "Location"], ["notifications", "Notifications"]];
+async function permState(n) {
+  try {
+    if (n === "notifications" && "Notification" in window) return Notification.permission === "default" ? "prompt" : Notification.permission;
+    return (await navigator.permissions.query({ name: n })).state;
+  } catch (e) { return "unknown"; }
+}
+async function permAsk(n) {
+  try {
+    if (n === "camera" || n === "microphone") { const s = await navigator.mediaDevices.getUserMedia(n === "camera" ? { video: true } : { audio: true }); s.getTracks().forEach((t) => t.stop()); }
+    else if (n === "geolocation") await new Promise((res, rej) => navigator.geolocation.getCurrentPosition(res, rej, { timeout: 8000 }));
+    else if ("Notification" in window) await Notification.requestPermission();
+  } catch (e) {}
+}
+PG.security = () => sub("Security And Permissions", `
+  <div class="scard"><h4>Change password</h4>
+    <input class="sin" id="pwNew" type="password" placeholder="New password" autocomplete="new-password">
+    <input class="sin" id="pwNew2" type="password" placeholder="Repeat new password" autocomplete="new-password">
+    <button type="button" class="pbtn main" id="pwSave">Update password</button><p class="stmsg" id="pwMsg"></p></div>
+  <div class="scard"><h4>Permissions</h4><div id="permList"></div></div>
+  <div class="scard"><h4>Devices</h4><button type="button" class="pbtn line" id="outAll">Log out of all devices</button></div>
+  <div class="scard"><button type="button" class="pbtn danger" id="delAcc">Delete my account</button></div>`, (b) => {
+  const paint = async () => {
+    const names = { granted: "Allowed", denied: "Blocked", prompt: "Not asked yet", unknown: "Unknown" };
+    let html = "";
+    for (const [k, label] of PERMS) { const s = await permState(k); html += `<div class="strow"><div>${label}<small>${names[s] || "Unknown"}</small></div>${s === "granted" ? "" : `<button type="button" class="pbtn line" style="width:auto;margin:0;padding:8px 16px" data-perm="${k}">Allow</button>`}</div>`; }
+    $("#permList").innerHTML = html;
+  };
+  paint();
+  $("#permList").onclick = async (e) => { const p = e.target.closest("[data-perm]"); if (p) { await permAsk(p.dataset.perm); paint(); } };
+  $("#pwSave").onclick = async () => {
+    const a = $("#pwNew").value, c = $("#pwNew2").value, m = $("#pwMsg");
+    if (a.length < 6) return (m.textContent = "Use at least 6 characters.");
+    if (a !== c) return (m.textContent = "The two passwords don't match.");
+    m.textContent = "...";
+    const r = await sb.auth.updateUser({ password: a });
+    if (r.error) return (m.textContent = r.error.message);
+    sb.rpc("log_account", { p_event: "Changed password" });
+    $("#pwNew").value = $("#pwNew2").value = ""; m.style.color = "#7fe0a0"; m.textContent = "Password updated.";
+  };
+  $("#outAll").onclick = async () => {
+    if (!(await confirmBox("Log out everywhere?", "You'll be logged out on every phone and browser.", "Log out"))) return;
+    LS.set("mixo_accts", LS.get("mixo_accts", []).filter((a) => a.id !== meId()));
+    await sb.auth.signOut({ scope: "global" });
+    location.reload();
+  };
+  $("#delAcc").onclick = () => $("#setDelete").onclick();
+});
+
+// ----- Share Profile: unique link + unique QR code -----
+PG.share = () => {
+  const u = (MIXO.profile || {}).username;
+  if (!u) return toast("Set a username first.");
+  const link = location.href.split("#")[0] + "#u=" + encodeURIComponent(u);
+  sub("Share Profile", `<div class="scard"><div class="qrbox" id="qrBox"></div><p class="shl">@${esc(u)}</p><p class="shl" style="font-size:12px">${esc(link)}</p>
+    <button type="button" class="pbtn main" id="shCopy">Copy link</button><button type="button" class="pbtn line" id="shShare">Share</button></div>`, () => {
+    try { const q = qrcode(0, "M"); q.addData(link); q.make(); $("#qrBox").innerHTML = q.createSvgTag(6, 2); }
+    catch (e) { $("#qrBox").textContent = "QR code unavailable."; }
+    $("#shCopy").onclick = async () => { try { await navigator.clipboard.writeText(link); toast("Link copied"); } catch (e) { toast("Couldn't copy the link."); } };
+    $("#shShare").onclick = async () => { try { if (navigator.share) await navigator.share({ title: "MIXO", text: "Follow me on MIXO", url: link }); else { await navigator.clipboard.writeText(link); toast("Link copied"); } } catch (e) {} };
+  });
+};
+async function openUserByName(name) {
+  const r = await sb.from("profiles").select("id,username,display_name,avatar_url,bio,country").eq("username", name).maybeSingle();
+  if (!r.data) return toast("That profile doesn't exist.");
+  const p = r.data;
+  if (p.id === meId()) return go("profile");
+  openCreator({ uid: p.id, user: p.username, name: p.display_name || p.username, avatar: p.avatar_url, bio: p.bio || "", country: p.country || "", profile: { following: 0, followers: 0, likes: 0 } });
+}
+function openFromHash() {
+  if (!MIXO.user) return;
+  let m = location.hash.match(/^#post=(.+)$/);
+  if (m) { history.replaceState(null, "", location.href.split("#")[0]); return openPostView(decodeURIComponent(m[1])); }
+  m = location.hash.match(/^#u=(.+)$/);
+  if (m) { history.replaceState(null, "", location.href.split("#")[0]); openUserByName(decodeURIComponent(m[1])); }
+}
+
+// ----- Private Account -----
+PG.private = () => sub("Private Account", `<div class="scard">${toggleHTML("prvT", !!(MIXO.profile || {}).is_private, "Private account")}<p>When your account is private, only people who follow you can see your videos, topics and photos. Everyone else sees that the account is private.</p></div>`, () => {
+  $("#prvT").onclick = async () => {
+    const on = !$("#prvT").classList.contains("on");
+    if (await saveProfile({ is_private: on })) $("#prvT").classList.toggle("on", on);
+  };
+});
+
+// ----- Activity Center: watch history + account history -----
+PG.activity = () => sub("Activity Center", `<div class="sseg"><button type="button" class="on" data-t="w">Watch History</button><button type="button" data-t="a">Account History</button></div><div id="actBody2"></div>`, () => {
+  const show = async (t) => {
+    $$(".sseg button").forEach((b) => b.classList.toggle("on", b.dataset.t === t));
+    const box = $("#actBody2");
+    box.innerHTML = '<p class="stp">...</p>';
+    if (t === "w") {
+      const r = await sb.from("watch_history").select("post_id,watched_at").order("watched_at", { ascending: false }).limit(60);
+      if (r.error) return (box.innerHTML = `<p class="stp">${esc(sErr(r.error))}</p>`);
+      if (!r.data.length) return (box.innerHTML = '<p class="stp">Nothing here yet.</p>');
+      const ids = r.data.map((x) => x.post_id);
+      let list = [];
+      try { list = await queryPosts((q) => q.in("id", ids)); } catch (e) {}
+      list.sort((a, b) => ids.indexOf(String(a.id)) - ids.indexOf(String(b.id)));
+      box.innerHTML = '<button type="button" class="pbtn danger" id="clrW" style="width:100%;margin-bottom:12px">Clear history</button><div class="pgrid">' + list.filter((p) => p.type === "video" || p.img).map(videoTile).join("") + "</div>";
+      $("#clrW").onclick = async () => { await sb.rpc("clear_watch"); show("w"); };
+    } else {
+      const r = await sb.from("account_history").select("event,detail,created_at").order("created_at", { ascending: false }).limit(100);
+      if (r.error) return (box.innerHTML = `<p class="stp">${esc(sErr(r.error))}</p>`);
+      box.innerHTML = r.data.length ? r.data.map((x) => `<div class="hrow">${esc(x.event)}${x.detail ? " " + esc(x.detail) : ""}<small>${esc(new Date(x.created_at).toLocaleString())}</small></div>`).join("") : '<p class="stp">Nothing here yet.</p>';
+    }
+  };
+  $(".sseg").onclick = (e) => { const b = e.target.closest("button"); if (b) show(b.dataset.t); };
+  $("#actBody2").onclick = (e) => { const t = e.target.closest(".pt"); if (!t) return; const p = postCache.get(String(t.dataset.id)); if (p) openVideo(p.img); };
+  show("w");
+});
+const logWatchSeen = new Set();
+function logWatch(id) {
+  id = String(id);
+  const p = postCache.get(id);
+  if (!sb || !MIXO.user || !p || p.uid === meId() || (p.type && p.type !== "video") || logWatchSeen.has(id)) return;
+  logWatchSeen.add(id);
+  sb.rpc("log_watch", { p_post: id });
+}
+{ const _rv = recordView; recordView = function (id) { logWatch(id); return _rv(id); }; }
+
+// ----- Audience Control -----
+PG.audience = () => {
+  const p = MIXO.profile || {};
+  const opts = (k, cur) => [["everyone", "Everyone"], ["following", "People I follow"], ["nobody", "No one"]].map(([v, t]) => `<button type="button" class="sopt ${cur === v ? "on" : ""}" data-k="${k}" data-v="${v}">${t}</button>`).join("");
+  sub("Audience Control", `<div class="scard"><h4>Who can message you</h4>${opts("dm_privacy", p.dm_privacy || "everyone")}</div><div class="scard"><h4>Who can comment on your posts</h4>${opts("comment_privacy", p.comment_privacy || "everyone")}</div>`, (b) => {
+    b.onclick = async (e) => {
+      const o = e.target.closest(".sopt");
+      if (!o) return;
+      if (await saveProfile({ [o.dataset.k]: o.dataset.v })) $$(`.sopt[data-k="${o.dataset.k}"]`).forEach((x) => x.classList.toggle("on", x === o));
+    };
+  });
+};
+
+// ----- Free Up Space -----
+PG.space = () => sub("Free Up Space", `<div class="scard"><h4>Storage used</h4><p id="spUse">...</p><button type="button" class="pbtn main" id="spClear">Clear cache</button><p class="stmsg" id="spMsg" style="color:#7fe0a0"></p></div><p class="stp">Clearing the cache removes temporary files like downloaded thumbnails. You stay logged in and keep your posts and messages.</p>`, () => {
+  const paint = async () => {
+    try { const e = await navigator.storage.estimate(); $("#spUse").textContent = (e.usage / 1048576).toFixed(1) + " MB"; } catch (er) { $("#spUse").textContent = "Unknown"; }
+  };
+  paint();
+  $("#spClear").onclick = async () => {
+    let before = 0;
+    try { before = (await navigator.storage.estimate()).usage; } catch (e) {}
+    try { if (window.caches) for (const k of await caches.keys()) await caches.delete(k); } catch (e) {}
+    try { sessionStorage.clear(); signed.clear(); } catch (e) {}
+    await paint();
+    let after = before;
+    try { after = (await navigator.storage.estimate()).usage; } catch (e) {}
+    $("#spMsg").textContent = "Cleared " + (Math.max(0, before - after) / 1048576).toFixed(1) + " MB";
+  };
+});
+
+// ----- Save Data -----
+const dsOn = () => LS.get("mixo_ds", false);
+function dsApply() { document.documentElement.classList.toggle("datasaver", dsOn()); if (dsOn()) $$("video").forEach((v) => { v.preload = "none"; }); }
+PG.data = () => sub("Save Data", `<div class="scard">${toggleHTML("dsT", dsOn(), "Data saver", "Videos load only when you watch them")}<p>Uses less mobile data. Videos wait until you play them and previews load more slowly.</p></div>`, () => {
+  $("#dsT").onclick = () => { LS.set("mixo_ds", !dsOn()); $("#dsT").classList.toggle("on", dsOn()); dsApply(); };
+});
+new MutationObserver((ms) => { if (!dsOn()) return; ms.forEach((m) => m.addedNodes.forEach((n) => { if (n.nodeType === 1) { if (n.tagName === "VIDEO") n.preload = "none"; n.querySelectorAll && n.querySelectorAll("video").forEach((v) => { v.preload = "none"; }); } })); }).observe(document.body, { childList: true, subtree: true });
+dsApply();
+
+// ----- Help Center -----
+const FAQ = [
+  ["How do I post a video?", "Tap the + button, choose Video, record or upload a clip, add a caption and tap Post."],
+  ["How do I change my name or photo?", "Open Profile, tap Edit profile and change your display name, bio or photo."],
+  ["Why can't I send more messages?", "Until someone accepts your message request you can send one message. After they accept you can chat freely."],
+  ["How do I block or report someone?", "Open their profile or post, tap the three dots and choose Block or Report."],
+  ["How do voice calls work?", "Open a chat with someone who accepted you and is online, then tap the phone button."],
+  ["How do I make my account private?", "Settings > Private Account. Only people who follow you will see your posts."],
+  ["How do I delete my account?", "Settings > Security And Permissions > Delete my account. This cannot be undone."],
+];
+PG.help = () => sub("Help Center", `<div class="scard"><h4>Frequently asked questions</h4>${FAQ.map(([q, a]) => `<details><summary>${q}</summary><p>${a}</p></details>`).join("")}</div>
+  <div class="scard"><h4>Contact us</h4><textarea class="sin" id="supTxt" rows="4" maxlength="1500" placeholder="Describe your problem"></textarea><button type="button" class="pbtn main" id="supSend">Send message</button><p class="stmsg" id="supMsg"></p></div>`, () => {
+  $("#supSend").onclick = async () => {
+    const t = $("#supTxt").value.trim(), m = $("#supMsg");
+    if (!t) return;
+    const r = await sb.rpc("send_support", { p_message: t });
+    if (r.error) { m.style.color = "#ff9db0"; return (m.textContent = sErr(r.error)); }
+    $("#supTxt").value = ""; m.style.color = "#7fe0a0"; m.textContent = "Thanks! We'll look into it.";
+  };
+});
+
+// ----- Terms And Policies -----
+PG.terms = () => sub("Terms And Policies", `<div class="scard">
+  <details open><summary>Terms of Service</summary><p>By using MIXO you agree to these terms. You must be at least 13 years old. You are responsible for your account and everything you post. Don't post anything illegal, hateful, sexual involving minors, violent, or that infringes someone else's rights. You keep ownership of your content and give MIXO permission to show it in the app. We may remove content or accounts that break these rules. The app is provided as is and features may change.</p></details>
+  <details><summary>Privacy Policy</summary><p>We store the information you give us (email, username, profile, posts, comments, messages) and basic usage like which videos you watch, so the app can work. Your country is detected from your location only to show it on your profile; we don't keep your coordinates. You can make your account private, block people, download your data and delete your account at any time in Settings. We don't sell your personal data.</p></details>
+  <details><summary>Community Guidelines</summary><p>Be kind. No bullying, threats or harassment. No nudity or sexual content. No spam, scams or fake accounts. Don't share other people's private information. Report anything that breaks these rules with the three-dot menu so we can review it.</p></details></div>`);
+
+// ----- Privacy Center -----
+async function exportData() {
+  const me = meId(), own = (t, c) => sb.from(t).select("*").eq(c, me);
+  const [p, po, c, f, b] = await Promise.all([sb.from("profiles").select("*").eq("id", me), own("posts", "user_id"), own("post_comments", "user_id"), sb.from("follows").select("*").or(`follower_id.eq.${me},following_id.eq.${me}`), own("blocks", "blocker_id")]);
+  const blob = new Blob([JSON.stringify({ exported_at: new Date().toISOString(), profile: p.data, posts: po.data, comments: c.data, follows: f.data, blocked: b.data }, null, 2)], { type: "application/json" });
+  const file = new File([blob], "mixo-data.json", { type: "application/json" });
+  if (navigator.canShare && navigator.canShare({ files: [file] })) { try { await navigator.share({ files: [file] }); return; } catch (e) { if (e.name === "AbortError") return; } }
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "mixo-data.json"; document.body.appendChild(a); a.click(); a.remove();
+}
+PG.privacy = () => sub("Privacy Center", `<button type="button" class="srow" data-go="blk"><svg class="ic"><use href="#i-block"/></svg><span>Blocked accounts</span><svg class="ic chev"><use href="#s-chev"/></svg></button>
+  <button type="button" class="srow" data-go="aud"><svg class="ic"><use href="#s-people"/></svg><span>Audience Control</span><svg class="ic chev"><use href="#s-chev"/></svg></button>
+  <button type="button" class="srow" data-go="exp"><svg class="ic"><use href="#s-download"/></svg><span>Download my data</span><svg class="ic chev"><use href="#s-chev"/></svg></button>
+  <button type="button" class="srow" data-go="clr"><svg class="ic"><use href="#s-broom"/></svg><span>Clear watch history</span><svg class="ic chev"><use href="#s-chev"/></svg></button>`, (b) => {
+  b.onclick = async (e) => {
+    const r = e.target.closest("[data-go]");
+    if (!r) return;
+    const g = r.dataset.go;
+    if (g === "blk") $("#setBlocked").onclick();
+    else if (g === "aud") PG.audience();
+    else if (g === "exp") { toast("Preparing your data..."); await exportData(); }
+    else if (g === "clr" && (await confirmBox("Clear history?", "Your watch history will be deleted.", "Clear"))) { await sb.rpc("clear_watch"); logWatchSeen.clear(); }
+  };
+});
+
+// ----- Switch Account -----
+async function saveAcct() {
+  if (!sb || !MIXO.user) return;
+  const s = (await sb.auth.getSession()).data.session;
+  if (!s) return;
+  const pr = MIXO.profile || {};
+  const list = LS.get("mixo_accts", []).filter((a) => a.id !== s.user.id);
+  list.unshift({ id: s.user.id, email: s.user.email, name: pr.username || s.user.email, avatar: pr.avatar_url || "", at: s.access_token, rt: s.refresh_token });
+  LS.set("mixo_accts", list.slice(0, 5));
+}
+if (sb) sb.auth.onAuthStateChange((e, s) => { if (s) setTimeout(saveAcct, 0); });
+PG.switch = () => {
+  const list = LS.get("mixo_accts", []);
+  sub("Switch Account", `<div class="scard">${list.map((a) => `<button type="button" class="arow" data-id="${esc(a.id)}"><div class="iav"></div><div>@${esc(a.name)}<small>${a.id === meId() ? "Current" : esc(a.email || "")}</small></div></button>`).join("") || '<p class="stp">...</p>'}</div><button type="button" class="pbtn main" id="addAcct" style="width:100%">Add account</button>`, (b) => {
+    $$(".arow .iav", b).forEach((el, i) => setAv(el, list[i].avatar, list[i].name));
+    b.onclick = async (e) => {
+      const a = e.target.closest(".arow");
+      if (a) {
+        const acc = list.find((x) => x.id === a.dataset.id);
+        if (!acc || acc.id === meId()) return;
+        await saveAcct();
+        await sb.auth.signOut({ scope: "local" });
+        const r = await sb.auth.setSession({ access_token: acc.at, refresh_token: acc.rt });
+        if (r.error) LS.set("mixo_accts", LS.get("mixo_accts", []).filter((x) => x.id !== acc.id));
+        return location.reload();
+      }
+      if (e.target.closest("#addAcct")) { await saveAcct(); await sb.auth.signOut({ scope: "local" }); location.reload(); }
+    };
+  });
+};
+{ const _lo = $("#logoutBtn").onclick; $("#logoutBtn").onclick = async () => {
+  const id = MIXO.user && MIXO.user.id;
+  if (id) LS.set("mixo_accts", LS.get("mixo_accts", []).filter((a) => a.id !== id));
+  $("#settingsPg").classList.add("hidden"); $("#setSub").classList.add("hidden");
+  return _lo();
+}; }
+let lastUid = null;
+setInterval(() => {
+  const id = MIXO.user && MIXO.user.id;
+  if (id && id !== lastUid) { lastUid = id; saveAcct(); if (!sessionStorage.getItem("mixo_login_" + id)) { sessionStorage.setItem("mixo_login_" + id, "1"); sb.rpc("log_account", { p_event: "Logged in" }); } }
+  if (!id) lastUid = null;
+}, 1500);
+
+// ----- Language -----
+const LANGS = [["en", "English"], ["es", "Español"], ["fr", "Français"], ["pt", "Português"], ["de", "Deutsch"], ["ar", "العربية"]];
+const ROWS = [["Home", "Inicio", "Accueil", "Início", "Start", "الرئيسية"], ["Inbox", "Bandeja", "Messages", "Caixa de entrada", "Posteingang", "الوارد"], ["Explore", "Explorar", "Explorer", "Explorar", "Entdecken", "استكشاف"], ["Connect", "Conectar", "Connecter", "Conectar", "Verbinden", "تواصل"], ["Profile", "Perfil", "Profil", "Perfil", "Profil", "الملف الشخصي"], ["Settings", "Ajustes", "Paramètres", "Configurações", "Einstellungen", "الإعدادات"], ["SETTINGS", "AJUSTES", "PARAMÈTRES", "CONFIGURAÇÕES", "EINSTELLUNGEN", "الإعدادات"], ["Security And Permissions", "Seguridad y permisos", "Sécurité et autorisations", "Segurança e permissões", "Sicherheit und Berechtigungen", "الأمان والأذونات"], ["Share Profile", "Compartir perfil", "Partager le profil", "Compartilhar perfil", "Profil teilen", "مشاركة الملف"], ["Private Account", "Cuenta privada", "Compte privé", "Conta privada", "Privates Konto", "حساب خاص"], ["Activity Center", "Centro de actividad", "Centre d'activité", "Central de atividades", "Aktivitätszentrum", "مركز النشاط"], ["Audience Control", "Control de audiencia", "Contrôle de l'audience", "Controle de público", "Zielgruppenkontrolle", "التحكم بالجمهور"], ["Free Up Space", "Liberar espacio", "Libérer de l'espace", "Liberar espaço", "Speicher freigeben", "تحرير المساحة"], ["Save Data", "Ahorro de datos", "Économie de données", "Economia de dados", "Datensparen", "توفير البيانات"], ["Help Center", "Centro de ayuda", "Centre d'aide", "Central de ajuda", "Hilfezentrum", "مركز المساعدة"], ["Terms And Policies", "Términos y políticas", "Conditions et politiques", "Termos e políticas", "Bedingungen und Richtlinien", "الشروط والسياسات"], ["Privacy Center", "Centro de privacidad", "Centre de confidentialité", "Central de privacidade", "Datenschutzzentrum", "مركز الخصوصية"], ["Switch Account", "Cambiar de cuenta", "Changer de compte", "Trocar de conta", "Konto wechseln", "تبديل الحساب"], ["Log Out", "Cerrar sesión", "Se déconnecter", "Sair", "Abmelden", "تسجيل الخروج"], ["Log out", "Cerrar sesión", "Se déconnecter", "Sair", "Abmelden", "تسجيل الخروج"], ["Log in", "Iniciar sesión", "Se connecter", "Entrar", "Anmelden", "تسجيل الدخول"], ["Sign up", "Registrarse", "S'inscrire", "Cadastrar", "Registrieren", "إنشاء حساب"], ["Create account", "Crear cuenta", "Créer un compte", "Criar conta", "Konto erstellen", "إنشاء حساب"], ["Edit profile", "Editar perfil", "Modifier le profil", "Editar perfil", "Profil bearbeiten", "تعديل الملف"], ["Follow", "Seguir", "Suivre", "Seguir", "Folgen", "متابعة"], ["Following", "Siguiendo", "Abonné", "Seguindo", "Folge ich", "تتابعه"], ["Followers", "Seguidores", "Abonnés", "Seguidores", "Follower", "المتابعون"], ["Likes", "Me gusta", "J'aime", "Curtidas", "Likes", "الإعجابات"], ["Message", "Mensaje", "Message", "Mensagem", "Nachricht", "رسالة"], ["Messages", "Mensajes", "Messages", "Mensagens", "Nachrichten", "الرسائل"], ["Requests", "Solicitudes", "Demandes", "Pedidos", "Anfragen", "الطلبات"], ["Message...", "Mensaje...", "Message...", "Mensagem...", "Nachricht...", "رسالة..."], ["Videos", "Vídeos", "Vidéos", "Vídeos", "Videos", "فيديوهات"], ["Topics", "Temas", "Sujets", "Tópicos", "Themen", "مواضيع"], ["Photos", "Fotos", "Photos", "Fotos", "Fotos", "صور"], ["Pictures", "Imágenes", "Images", "Imagens", "Bilder", "صور"], ["Saved", "Guardados", "Enregistrés", "Salvos", "Gespeichert", "المحفوظات"], ["Trending", "Tendencias", "Tendances", "Em alta", "Trends", "الرائج"], ["Email", "Correo", "E-mail", "E-mail", "E-Mail", "البريد الإلكتروني"], ["Password", "Contraseña", "Mot de passe", "Senha", "Passwort", "كلمة المرور"], ["Username", "Usuario", "Nom d'utilisateur", "Nome de usuário", "Benutzername", "اسم المستخدم"], ["Display name", "Nombre visible", "Nom affiché", "Nome de exibição", "Anzeigename", "الاسم المعروض"], ["Your name", "Tu nombre", "Votre nom", "Seu nome", "Dein Name", "اسمك"], ["Bio", "Biografía", "Bio", "Bio", "Bio", "النبذة"], ["Add a bio", "Añade una biografía", "Ajouter une bio", "Adicionar bio", "Bio hinzufügen", "أضف نبذة"], ["Country", "País", "Pays", "País", "Land", "البلد"], ["Earth", "Tierra", "Terre", "Terra", "Erde", "الأرض"], ["Forgot password?", "¿Olvidaste tu contraseña?", "Mot de passe oublié ?", "Esqueceu a senha?", "Passwort vergessen?", "نسيت كلمة المرور؟"], ["Back to log in", "Volver a iniciar sesión", "Retour à la connexion", "Voltar ao login", "Zurück zur Anmeldung", "العودة لتسجيل الدخول"], ["Send reset link", "Enviar enlace", "Envoyer le lien", "Enviar link", "Link senden", "إرسال الرابط"], ["Show password", "Mostrar contraseña", "Afficher", "Mostrar senha", "Passwort zeigen", "إظهار كلمة المرور"], ["Cancel", "Cancelar", "Annuler", "Cancelar", "Abbrechen", "إلغاء"], ["Close", "Cerrar", "Fermer", "Fechar", "Schließen", "إغلاق"], ["Save", "Guardar", "Enregistrer", "Salvar", "Speichern", "حفظ"], ["Delete", "Eliminar", "Supprimer", "Excluir", "Löschen", "حذف"], ["Post", "Publicar", "Publier", "Publicar", "Posten", "نشر"], ["Send", "Enviar", "Envoyer", "Enviar", "Senden", "إرسال"], ["Next", "Siguiente", "Suivant", "Próximo", "Weiter", "التالي"], ["Back", "Atrás", "Retour", "Voltar", "Zurück", "رجوع"], ["Skip", "Omitir", "Passer", "Pular", "Überspringen", "تخطي"], ["Search", "Buscar", "Rechercher", "Buscar", "Suchen", "بحث"], ["Create", "Crear", "Créer", "Criar", "Erstellen", "إنشاء"], ["Upload", "Subir", "Importer", "Enviar", "Hochladen", "رفع"], ["Retake", "Repetir", "Reprendre", "Refazer", "Wiederholen", "إعادة"], ["Record", "Grabar", "Enregistrer", "Gravar", "Aufnehmen", "تسجيل"], ["Flip", "Girar", "Inverser", "Virar", "Wechseln", "قلب"], ["Timer", "Temporizador", "Minuteur", "Timer", "Timer", "المؤقت"], ["Comments", "Comentarios", "Commentaires", "Comentários", "Kommentare", "التعليقات"], ["Add a comment...", "Añade un comentario...", "Ajouter un commentaire...", "Adicionar comentário...", "Kommentar hinzufügen...", "أضف تعليقًا..."], ["Reply", "Responder", "Répondre", "Responder", "Antworten", "رد"], ["Reply with video", "Responder con vídeo", "Répondre en vidéo", "Responder com vídeo", "Mit Video antworten", "رد بفيديو"], ["Accept", "Aceptar", "Accepter", "Aceitar", "Annehmen", "قبول"], ["Reject", "Rechazar", "Refuser", "Recusar", "Ablehnen", "رفض"], ["Decline", "Rechazar", "Refuser", "Recusar", "Ablehnen", "رفض"], ["Answer", "Contestar", "Répondre", "Atender", "Annehmen", "رد"], ["Call", "Llamar", "Appeler", "Ligar", "Anrufen", "اتصال"], ["Calling...", "Llamando...", "Appel...", "Chamando...", "Anruf...", "جارٍ الاتصال..."], ["Mute", "Silenciar", "Muet", "Silenciar", "Stumm", "كتم"], ["Online", "En línea", "En ligne", "Online", "Online", "متصل"], ["Report", "Reportar", "Signaler", "Denunciar", "Melden", "إبلاغ"], ["Send report", "Enviar reporte", "Envoyer le signalement", "Enviar denúncia", "Meldung senden", "إرسال البلاغ"], ["Blocked accounts", "Cuentas bloqueadas", "Comptes bloqués", "Contas bloqueadas", "Gesperrte Konten", "الحسابات المحظورة"], ["Delete my account", "Eliminar mi cuenta", "Supprimer mon compte", "Excluir minha conta", "Mein Konto löschen", "حذف حسابي"], ["Language", "Idioma", "Langue", "Idioma", "Sprache", "اللغة"], ["Premium", "Premium", "Premium", "Premium", "Premium", "بريميوم"], ["Upgrade", "Mejorar", "Améliorer", "Atualizar", "Upgrade", "ترقية"], ["Recent", "Recientes", "Récents", "Recentes", "Zuletzt", "الأخيرة"], ["Filters", "Filtros", "Filtres", "Filtros", "Filter", "الفلاتر"], ["Friends", "Amigos", "Amis", "Amigos", "Freunde", "أصدقاء"], ["Interests", "Intereses", "Centres d'intérêt", "Interesses", "Interessen", "الاهتمامات"], ["Your card", "Tu tarjeta", "Votre carte", "Seu cartão", "Deine Karte", "بطاقتك"], ["Edit your card", "Edita tu tarjeta", "Modifier votre carte", "Editar seu cartão", "Karte bearbeiten", "عدّل بطاقتك"], ["Save card", "Guardar tarjeta", "Enregistrer la carte", "Salvar cartão", "Karte speichern", "حفظ البطاقة"], ["Anyone", "Cualquiera", "Tout le monde", "Qualquer pessoa", "Jeder", "أي شخص"], ["Story", "Historia", "Story", "Story", "Story", "قصة"], ["Your Story", "Tu historia", "Votre story", "Seu story", "Deine Story", "قصتك"], ["Add to Story", "Añadir a historia", "Ajouter à la story", "Adicionar ao story", "Zur Story hinzufügen", "أضف إلى القصة"], ["Original sound", "Sonido original", "Son original", "Som original", "Originalton", "الصوت الأصلي"], ["Video", "Vídeo", "Vidéo", "Vídeo", "Video", "فيديو"], ["Topic", "Tema", "Sujet", "Tópico", "Thema", "موضوع"], ["Preview", "Vista previa", "Aperçu", "Pré-visualização", "Vorschau", "معاينة"], ["Unlimited connects", "Conexiones ilimitadas", "Connexions illimitées", "Conexões ilimitadas", "Unbegrenzte Verbindungen", "اتصالات غير محدودة"], ["Cancel anytime.", "Cancela cuando quieras.", "Annulez à tout moment.", "Cancele quando quiser.", "Jederzeit kündbar.", "يمكنك الإلغاء في أي وقت."], ["CONTINUE", "CONTINUAR", "CONTINUER", "CONTINUAR", "WEITER", "متابعة"], ["Change password", "Cambiar contraseña", "Changer le mot de passe", "Alterar senha", "Passwort ändern", "تغيير كلمة المرور"], ["New password", "Nueva contraseña", "Nouveau mot de passe", "Nova senha", "Neues Passwort", "كلمة مرور جديدة"], ["Repeat new password", "Repite la contraseña", "Répétez le mot de passe", "Repita a senha", "Passwort wiederholen", "أعد كلمة المرور"], ["Update password", "Actualizar contraseña", "Mettre à jour", "Atualizar senha", "Passwort aktualisieren", "تحديث كلمة المرور"], ["Permissions", "Permisos", "Autorisations", "Permissões", "Berechtigungen", "الأذونات"], ["Camera", "Cámara", "Caméra", "Câmera", "Kamera", "الكاميرا"], ["Microphone", "Micrófono", "Microphone", "Microfone", "Mikrofon", "الميكروفون"], ["Location", "Ubicación", "Localisation", "Localização", "Standort", "الموقع"], ["Notifications", "Notificaciones", "Notifications", "Notificações", "Mitteilungen", "الإشعارات"], ["Allow", "Permitir", "Autoriser", "Permitir", "Erlauben", "السماح"], ["Allowed", "Permitido", "Autorisé", "Permitido", "Erlaubt", "مسموح"], ["Blocked", "Bloqueado", "Bloqué", "Bloqueado", "Blockiert", "محظور"], ["Not asked yet", "Aún no solicitado", "Pas encore demandé", "Ainda não solicitado", "Noch nicht gefragt", "لم يُطلب بعد"], ["Unknown", "Desconocido", "Inconnu", "Desconhecido", "Unbekannt", "غير معروف"], ["Devices", "Dispositivos", "Appareils", "Dispositivos", "Geräte", "الأجهزة"], ["Log out of all devices", "Cerrar sesión en todos los dispositivos", "Se déconnecter partout", "Sair de todos os dispositivos", "Auf allen Geräten abmelden", "تسجيل الخروج من كل الأجهزة"], ["Copy link", "Copiar enlace", "Copier le lien", "Copiar link", "Link kopieren", "نسخ الرابط"], ["Share", "Compartir", "Partager", "Compartilhar", "Teilen", "مشاركة"], ["Link copied", "Enlace copiado", "Lien copié", "Link copiado", "Link kopiert", "تم نسخ الرابط"], ["Watch History", "Historial de reproducción", "Historique de visionnage", "Histórico de vídeos", "Wiedergabeverlauf", "سجل المشاهدة"], ["Account History", "Historial de la cuenta", "Historique du compte", "Histórico da conta", "Kontoverlauf", "سجل الحساب"], ["Clear history", "Borrar historial", "Effacer l'historique", "Limpar histórico", "Verlauf löschen", "مسح السجل"], ["Nothing here yet.", "Nada por aquí todavía.", "Rien ici pour l'instant.", "Nada aqui ainda.", "Noch nichts hier.", "لا شيء هنا بعد."], ["Who can message you", "Quién puede escribirte", "Qui peut vous écrire", "Quem pode enviar mensagem", "Wer dir schreiben darf", "من يمكنه مراسلتك"], ["Who can comment on your posts", "Quién puede comentar", "Qui peut commenter", "Quem pode comentar", "Wer kommentieren darf", "من يمكنه التعليق"], ["Everyone", "Todos", "Tout le monde", "Todos", "Alle", "الجميع"], ["People I follow", "Personas que sigo", "Personnes que je suis", "Pessoas que sigo", "Personen, denen ich folge", "من أتابعهم"], ["No one", "Nadie", "Personne", "Ninguém", "Niemand", "لا أحد"], ["Storage used", "Almacenamiento usado", "Stockage utilisé", "Armazenamento usado", "Belegter Speicher", "المساحة المستخدمة"], ["Clear cache", "Borrar caché", "Vider le cache", "Limpar cache", "Cache leeren", "مسح الذاكرة المؤقتة"], ["Data saver", "Ahorro de datos", "Économiseur de données", "Economia de dados", "Datensparer", "موفر البيانات"], ["Frequently asked questions", "Preguntas frecuentes", "Questions fréquentes", "Perguntas frequentes", "Häufige Fragen", "الأسئلة الشائعة"], ["Contact us", "Contáctanos", "Nous contacter", "Fale conosco", "Kontakt", "اتصل بنا"], ["Send message", "Enviar mensaje", "Envoyer le message", "Enviar mensagem", "Nachricht senden", "إرسال الرسالة"], ["Terms of Service", "Términos de servicio", "Conditions d'utilisation", "Termos de serviço", "Nutzungsbedingungen", "شروط الخدمة"], ["Privacy Policy", "Política de privacidad", "Politique de confidentialité", "Política de privacidade", "Datenschutzrichtlinie", "سياسة الخصوصية"], ["Community Guidelines", "Normas de la comunidad", "Règles de la communauté", "Diretrizes da comunidade", "Community-Richtlinien", "إرشادات المجتمع"], ["Add account", "Añadir cuenta", "Ajouter un compte", "Adicionar conta", "Konto hinzufügen", "إضافة حساب"], ["Current", "Actual", "Actuel", "Atual", "Aktuell", "الحالي"], ["Download my data", "Descargar mis datos", "Télécharger mes données", "Baixar meus dados", "Meine Daten herunterladen", "تنزيل بياناتي"], ["Clear watch history", "Borrar historial", "Effacer l'historique", "Limpar histórico", "Verlauf löschen", "مسح سجل المشاهدة"], ["now", "ahora", "maintenant", "agora", "jetzt", "الآن"], ["just now", "justo ahora", "à l'instant", "agora mesmo", "gerade eben", "الآن"]];
+const DICT = {};
+LANGS.slice(1).forEach(([c], i) => { DICT[c] = {}; ROWS.forEach((r) => { DICT[c][r[0]] = r[i + 1]; }); });
+let LANG = LS.get("mixo_lang", "en");
+const trDone = new WeakMap();
+function trVal(en) { if (LANG === "en") return en; const k = en.trim(), t = DICT[LANG] && DICT[LANG][k]; return t ? en.replace(k, t) : en; }
+function trApply(root) {
+  const w = document.createTreeWalker(root || document.body, NodeFilter.SHOW_TEXT);
+  let n;
+  while ((n = w.nextNode())) {
+    const pn = n.parentNode && n.parentNode.nodeName;
+    if (pn === "SCRIPT" || pn === "STYLE" || pn === "TEXTAREA") continue;
+    const rec = trDone.get(n);
+    const en = rec && n.nodeValue === rec.out ? rec.en : n.nodeValue;
+    if (!en.trim()) continue;
+    const out = trVal(en);
+    if (out !== n.nodeValue) n.nodeValue = out;
+    trDone.set(n, { en, out });
+  }
+  (root && root.querySelectorAll ? root : document).querySelectorAll("[placeholder],[aria-label],[title]").forEach((el) => {
+    ["placeholder", "aria-label", "title"].forEach((a) => {
+      const cur = el.getAttribute(a);
+      if (cur === null) return;
+      const key = "data-en-" + a;
+      let en = el.getAttribute(key);
+      if (en === null || trVal(en) !== cur) { en = cur; el.setAttribute(key, en); }
+      const out = trVal(en);
+      if (out !== cur) el.setAttribute(a, out);
+    });
+  });
+}
+function setLang(c) {
+  LANG = c; LS.set("mixo_lang", c);
+  document.documentElement.lang = c;
+  trApply(document.body);
+}
+let trTimer = 0;
+new MutationObserver(() => { if (LANG === "en") return; clearTimeout(trTimer); trTimer = setTimeout(() => trApply(document.body), 60); }).observe(document.body, { childList: true, subtree: true, characterData: true });
+PG.language = () => sub("Language", `<div class="scard">${LANGS.map(([c, n]) => `<button type="button" class="sopt ${LANG === c ? "on" : ""}" data-c="${c}">${n}</button>`).join("")}</div>`, (b) => {
+  b.onclick = (e) => { const o = e.target.closest(".sopt"); if (!o) return; setLang(o.dataset.c); $$(".sopt", b).forEach((x) => x.classList.toggle("on", x === o)); };
+});
+if (LANG !== "en") { document.documentElement.lang = LANG; trApply(document.body); }
+
+$("#settingsPg").addEventListener("click", (e) => {
+  const r = e.target.closest("[data-pg]");
+  if (r && PG[r.dataset.pg]) PG[r.dataset.pg]();
+});
